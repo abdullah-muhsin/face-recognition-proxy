@@ -30,6 +30,7 @@ Local-only credential memory is stored in `credentials.local.md`, which is inten
 - Full video streaming endpoints tested under `/ISAPI/Streaming/...` returned `404`.
 - Access-control events are available through both polling (`/ISAPI/AccessControl/AcsEvent`) and a live multipart stream (`/ISAPI/Event/notification/alertStream`).
 - HTTP notification host configuration is writable, but direct HTTP delivery of attendance/access-controller events was not observed during live testing. Do not treat it as a confirmed webhook path for this device firmware.
+- EHome/ISUP v5 platform access is writable. A live probe confirmed the terminal initiates outbound binary ISUP registration traffic to a configured server on port `7660`. This is not HTTP; Laravel cannot receive it directly without a real ISUP server/gateway in front.
 - User metadata is available. Raw face/fingerprint search endpoints tested on this firmware returned `notSupport`, even though enrolled user records expose `numOfFace` and `numOfFP`.
 - Event records may include `pictureURL` values. Those URLs returned JPEG images when tested; binary images are intentionally not stored in this repo.
 - The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed from this WSL/curl environment. HTTP Digest on port `80` was used for all documented calls.
@@ -72,6 +73,8 @@ Local-only credential memory is stored in `credentials.local.md`, which is inten
 ## External References Used For Probe Planning
 
 - Hikvision ISAPI portal: `https://tpp.hikvision.com/download/ISAPI_OTAP`
+- Hikvision Open Capabilities: `https://tpp.hikvision.com/tpp/OpenCapabilities`
+- Hikvision ISUP port reference: `https://enpinfo.hikvision.com/unzip/20200731103027_05278_doc/GUID-E3A713A8-BC04-4E31-A287-C6E990E2F070.html`
 - Hikvision product page: `https://www.hikvision.com/en/products/Access-Control-Products/Face-Recognition-Terminals/Value-Series/ds-k1a340fwx/`
 - Hikvision datasheet PDF: `https://assets.hikvision.com/prd/public/all/doc/m000044902/DS-K1A340FWX-Face-Recognition-Terminal_Datasheet_V1.0_20220824.pdf`
 

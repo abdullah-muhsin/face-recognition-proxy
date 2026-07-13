@@ -20,7 +20,7 @@ This summary separates verified live behavior from feature flags that were adver
 | Verification TTS | Verification TTS and holiday TTS plan configuration are readable; TTS is currently disabled. |
 | Audio/language | Device language and audio output volume are readable. |
 | Image settings | Image channels `1` and `2` are readable. |
-| Platform services | EZVIZ, EHome, picture server, and discovery mode are readable. EZVIZ/EHome were disabled or unregistered. |
+| Platform services | EZVIZ, EHome/ISUP, picture server, and discovery mode are readable. EHome/ISUP v5 is writable and the device initiated outbound TCP registration attempts to a configured ISUP registration port. |
 | Video intercom related address | Related address configuration is readable but unconfigured. |
 
 ## Confirmed Counts And Capacities
@@ -55,6 +55,7 @@ This summary separates verified live behavior from feature flags that were adver
 | SNAP/deploy/identity endpoints | Some returned `200` with empty body. |
 | Generic UI bundle endpoints | The web UI lists many generic endpoints that returned `notSupport` on this device. |
 | Direct HTTP event push | HTTP notification host configuration is writable, but AccessControllerEvent trigger binding was not exposed and no outbound HTTP request was observed during a live access-controller event. |
+| Full ISUP platform integration | Outbound ISUP registration traffic was confirmed, but complete registration and event ingestion were not verified because no real Hikvision ISUP server/gateway was available to complete the binary handshake. |
 | Write operations | User/card/fingerprint/local-attendance write method validation was tested. Destructive reset/clear/firmware/control operations were not executed. See [device state change log](device-state-change-log.md). |
 
 ## Practical Integration Shape
@@ -69,3 +70,11 @@ For an attendance integration, the safest confirmed flow is:
 6. Use `/ISAPI/Event/notification/alertStream` for live event streaming if long-running multipart parsing is acceptable.
 
 Do not treat `/ISAPI/Event/notification/httpHosts` as a confirmed direct attendance webhook mechanism on this firmware.
+
+For cloud delivery through ISUP, the strict architecture is:
+
+1. Configure `/ISAPI/System/Network/Ehome?centerID=1` with the public address, registration port, device ID, login key, and `protocolVersion=v5.0`.
+2. Run a real Hikvision-compatible ISUP server/gateway at that address. A Laravel HTTP route is not enough.
+3. Have that ISUP server/gateway hand attendance events to Laravel through an explicit internal API or queue after it has completed ISUP registration and decoded the event protocol.
+
+The live probe proved step 1 at the device level. Step 2 remains the required missing component.

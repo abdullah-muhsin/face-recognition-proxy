@@ -1,6 +1,6 @@
 # Device State Change Log
 
-This file records writes executed during the second discovery pass. It exists so the documentation is transparent about non-read-only testing.
+This file records writes executed during discovery and integration probes. It exists so the documentation is transparent about non-read-only testing.
 
 Test date: `2026-07-13`.
 
@@ -84,6 +84,104 @@ The host was restored after the probe:
   <httpAuthenticationMethod>none</httpAuthenticationMethod>
 </HttpHostNotification>
 ```
+
+## EHome / ISUP Registration Probe
+
+The EHome/ISUP platform configuration was temporarily changed while testing whether the terminal can initiate outbound ISUP registration to a server.
+
+Write endpoint:
+
+```bash
+PUT /ISAPI/System/Network/Ehome?centerID=1
+```
+
+Temporary target:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Ehome version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <enabled>true</enabled>
+  <deviceID>K1A340FWXPROBE1</deviceID>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>192.168.1.2</ipAddress>
+  <portNo>7660</portNo>
+  <key>********</key>
+  <protocolVersion>v5.0</protocolVersion>
+</Ehome>
+```
+
+The key was an 8-character temporary probe key and is intentionally redacted.
+
+Observed response:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ResponseStatus version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <requestURL></requestURL>
+  <statusCode>1</statusCode>
+  <statusString>OK</statusString>
+  <subStatusCode>ok</subStatusCode>
+</ResponseStatus>
+```
+
+Verified temporary state:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Ehome version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <enabled>true</enabled>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>192.168.1.2</ipAddress>
+  <portNo>7660</portNo>
+  <deviceID>K1A340FWXPROBE1</deviceID>
+  <registerStatus>false</registerStatus>
+  <protocolVersion>v5.0</protocolVersion>
+</Ehome>
+```
+
+A direct TCP listener on `192.168.1.2:7660` accepted repeated connections from the terminal at `192.168.1.3`. The first payloads were binary ISUP registration attempts. They included visible strings for serial suffix `J59360966`, model `DS-K1A340FWX`, and configured device ID `K1A340FWXPROBE1`.
+
+Representative payload prefix:
+
+```text
+HEX   10 57 01 01 00 09 4A 35 39 33 36 30 39 36 36 0C 44 53 2D 4B 31 41 33 34 30 46 57 58 29 2C 0F 4B 31 41 33 34 30 46 57 58 50 52 4F 42 45 31 ...
+ASCII .W....J59360966.DS-K1A340FWX),.K1A340FWXPROBE1...
+```
+
+The probe listener was not a Hikvision ISUP server, so it did not complete registration. `registerStatus` remained `false`.
+
+### ISUP Cleanup
+
+A direct attempt to restore the original factory-empty EHome state failed because this firmware rejects `portNo 0` in a `PUT` body after EHome has been configured:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ResponseStatus version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <requestURL></requestURL>
+  <statusCode>6</statusCode>
+  <statusString>Invalid Content</statusString>
+  <subStatusCode>portError</subStatusCode>
+  <errorCode>1610612748</errorCode>
+  <errorMsg>portError</errorMsg>
+</ResponseStatus>
+```
+
+Blank or omitted fields were accepted while disabled but mostly ignored. The final verified state was disabled and non-routable:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Ehome version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <enabled>false</enabled>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>0.0.0.0</ipAddress>
+  <portNo>1024</portNo>
+  <deviceID>0</deviceID>
+  <registerStatus>false</registerStatus>
+  <protocolVersion>v5.0</protocolVersion>
+</Ehome>
+```
+
+This differs from the original factory-empty readback, but ISUP is disabled and points at no routable host.
 
 ## Local Attendance DELETE Probe
 
