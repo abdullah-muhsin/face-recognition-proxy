@@ -6,9 +6,39 @@ use App\Models\AttendanceRecord;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\View\View;
 
 class AttendanceRecordController extends Controller
 {
+    public function index(Request $request): View
+    {
+        $search = trim((string) $request->query('search', ''));
+
+        $records = AttendanceRecord::query()
+            ->when($search !== '', function ($query) use ($search): void {
+                $query->where(function ($query) use ($search): void {
+                    $query->where('employee_no', 'like', "%{$search}%")
+                        ->orWhere('employee_name', 'like', "%{$search}%")
+                        ->orWhere('device_serial_number', 'like', "%{$search}%")
+                        ->orWhere('bridge_id', 'like', "%{$search}%")
+                        ->orWhere('event_serial_no', $search);
+                });
+            })
+            ->latest('event_time')
+            ->latest('id')
+            ->paginate(50)
+            ->withQueryString();
+
+        return view('attendance-records.index', [
+            'records' => $records,
+            'search' => $search,
+            'totalRecords' => AttendanceRecord::count(),
+            'latestRecord' => AttendanceRecord::query()->latest('event_time')->latest('id')->first(),
+            'uniqueEmployees' => AttendanceRecord::query()->whereNotNull('employee_no')->distinct('employee_no')->count('employee_no'),
+            'uniqueDevices' => AttendanceRecord::query()->distinct('device_key')->count('device_key'),
+        ]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $this->authorizeBridge($request);

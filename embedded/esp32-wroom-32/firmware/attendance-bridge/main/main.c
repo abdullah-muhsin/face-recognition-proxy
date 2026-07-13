@@ -30,12 +30,42 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 
+#if __has_include("local_defaults.h")
+#include "local_defaults.h"
+#endif
+
 #define FIRMWARE_VERSION "0.1.0"
+
+#ifndef DEFAULT_STA_SSID
+#define DEFAULT_STA_SSID ""
+#endif
+
+#ifndef DEFAULT_STA_PASSWORD
+#define DEFAULT_STA_PASSWORD ""
+#endif
+
+#ifndef DEFAULT_DEVICE_BASE_URL
 #define DEFAULT_DEVICE_BASE_URL "http://192.168.1.3"
+#endif
+
+#ifndef DEFAULT_DEVICE_USERNAME
 #define DEFAULT_DEVICE_USERNAME "admin"
+#endif
+
+#ifndef DEFAULT_DEVICE_PASSWORD
 #define DEFAULT_DEVICE_PASSWORD "lara1234"
+#endif
+
+#ifndef DEFAULT_RECEIVER_URL
+#define DEFAULT_RECEIVER_URL "http://192.168.1.2/attendance-receiver/api/attendance-records"
+#endif
+
+#ifndef DEFAULT_RECEIVER_TOKEN
+#define DEFAULT_RECEIVER_TOKEN ""
+#endif
+
 #define DEFAULT_AP_CHANNEL 6
-#define DEFAULT_POLL_INTERVAL_SECONDS 15
+#define DEFAULT_POLL_INTERVAL_SECONDS 5
 #define MAX_HIKVISION_RESULTS 30
 #define MAX_PAGES_PER_CYCLE 5
 #define HTTP_CAPTURE_DEVICE_BYTES (28 * 1024)
@@ -349,12 +379,16 @@ static void config_set_defaults(bridge_config_t *config)
     snprintf(config->ap_ssid, sizeof(config->ap_ssid), "AttendanceBridge-%02X%02X%02X",
              mac[3], mac[4], mac[5]);
 
+    copy_string(config->sta_ssid, sizeof(config->sta_ssid), DEFAULT_STA_SSID);
+    copy_string(config->sta_password, sizeof(config->sta_password), DEFAULT_STA_PASSWORD);
     config->ap_password[0] = '\0';
     config->ap_open = true;
     config->ap_channel = DEFAULT_AP_CHANNEL;
     copy_string(config->device_base_url, sizeof(config->device_base_url), DEFAULT_DEVICE_BASE_URL);
     copy_string(config->device_username, sizeof(config->device_username), DEFAULT_DEVICE_USERNAME);
     copy_string(config->device_password, sizeof(config->device_password), DEFAULT_DEVICE_PASSWORD);
+    copy_string(config->receiver_url, sizeof(config->receiver_url), DEFAULT_RECEIVER_URL);
+    copy_string(config->receiver_token, sizeof(config->receiver_token), DEFAULT_RECEIVER_TOKEN);
     config->poll_interval_seconds = DEFAULT_POLL_INTERVAL_SECONDS;
     config->last_serial = 0;
 }

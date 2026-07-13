@@ -1,5 +1,6 @@
 embedded/**/firmware/**/build/
 embedded/**/firmware/**/managed_components/
+embedded/**/firmware/**/main/local_defaults.h
 
 docs/**/credentials.local.md
 docs/**/.env.local
