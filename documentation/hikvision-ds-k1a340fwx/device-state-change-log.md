@@ -4,6 +4,46 @@ This file records writes executed during the second discovery pass. It exists so
 
 Test date: `2026-07-13`.
 
+## SSH Enable Operation
+
+The following write was executed by the operator after the second discovery pass and then verified live:
+
+```bash
+PUT /ISAPI/System/Network/ssh
+```
+
+Request body:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<SSH version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <enabled>true</enabled>
+</SSH>
+```
+
+Observed response:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ResponseStatus version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <requestURL></requestURL>
+  <statusCode>1</statusCode>
+  <statusString>OK</statusString>
+  <subStatusCode>ok</subStatusCode>
+</ResponseStatus>
+```
+
+Verified post-change state:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<SSH version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <enabled>true</enabled>
+</SSH>
+```
+
+TCP `22` then opened as Dropbear SSH `2022.83`.
+
 ## Local Attendance DELETE Probe
 
 The following calls were executed with an empty JSON body while probing method support:

@@ -26,6 +26,7 @@ Do not hard-code the password in source code, logs, or documentation.
 - User metadata is available. Raw face/fingerprint search endpoints tested on this firmware returned `notSupport`, even though enrolled user records expose `numOfFace` and `numOfFP`.
 - Event records may include `pictureURL` values. Those URLs returned JPEG images when tested; binary images are intentionally not stored in this repo.
 - The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed from this WSL/curl environment. HTTP Digest on port `80` was used for all documented calls.
+- After SSH was enabled through ISAPI, port `22` exposed Dropbear SSH. Manual SSH testing showed a protected BusyBox shell for `root`; keep SSH disabled unless maintenance access is intentionally required.
 - Wired interface `1` reports `192.0.0.64`; Wi-Fi interface `2` reports the observed reachable address `192.168.1.3`.
 - The device web UI assets were inspected to discover firmware-specific ISAPI paths. This corrected several earlier guessed paths, especially local attendance search, Wi-Fi, attendance mode, and TTS.
 - Non-read-only local-attendance tests were executed. The destructive calls and repair are documented in [device state change log](device-state-change-log.md).
@@ -38,6 +39,7 @@ Do not hard-code the password in source code, logs, or documentation.
 - [Time configuration](apis/system-time.md)
 - [Network interfaces](apis/system-network-interfaces.md)
 - [Network and Wi-Fi](apis/system-network-wireless.md)
+- [Network services and SSH](apis/system-network-services.md)
 - [Audio and language](apis/system-audio-language.md)
 - [Algorithm information](apis/system-algorithms-info.md)
 - [Platform services](apis/system-platform-services.md)

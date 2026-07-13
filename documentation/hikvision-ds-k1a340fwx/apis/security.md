@@ -157,12 +157,12 @@ Status: `200 OK`
 Port sanity check from the test machine:
 
 ```text
-80    open
-443   open
-8000  open
+80/tcp    open
+443/tcp   open
+8000/tcp  open
 ```
 
-HTTPS note: `curl -k --digest ... https://192.168.1.3/...` failed during TLS handshake from this environment.
+HTTPS note: `curl -k --digest ... https://192.168.1.3/...` failed during TLS handshake from this environment. See [network services and SSH](system-network-services.md) for the fuller port-level scan, including RTSP, SSH, and TCP `8443`.
 
 ## Illegal Login Lock
 
@@ -215,4 +215,3 @@ Status: `200 OK`
 - Use Digest auth.
 - Only one API/security account is exposed by `/ISAPI/Security/users`.
 - Config import/export is advertised but not tested because exports may contain sensitive configuration.
-

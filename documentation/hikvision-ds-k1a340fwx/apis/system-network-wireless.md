@@ -9,7 +9,6 @@
 - `GET /ISAPI/System/Network/interfaces/2/wireless/capabilities`
 - `GET /ISAPI/System/Network/interfaces/2/wireless/connectStatus`
 - `GET /ISAPI/System/Network/interfaces/2/wireless/accessPointList`
-- `GET /ISAPI/System/Network/ssh`
 
 ## Network Capability
 
@@ -165,26 +164,9 @@ curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
 
 Observed response contained four nearby access points. SSIDs are redacted in this documentation; the connected AP had `signalStrength` `100`, `securityMode` `WPA2-personal`, and `connected` `true`.
 
-## SSH
-
-### Request
-
-```bash
-curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
-  "$ISAPI_BASE/ISAPI/System/Network/ssh"
-```
-
-### Observed Response
-
-```xml
-<SSH version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
-  <enabled>false</enabled>
-</SSH>
-```
-
 ## Integration Notes
 
 - Interface `1` is the wired/static interface and reports `192.0.0.64`.
 - Interface `2` is the Wi-Fi interface and reports the observed reachable address `192.168.1.3`.
 - Do not store the `sharedKey` returned by the Wi-Fi API in application logs or documentation.
-- SSH is supported by capability but disabled.
+- SSH state/control and port-level service behavior are documented separately in [network services and SSH](system-network-services.md).

@@ -4,6 +4,10 @@
 
 `GET /ISAPI/System/capabilities`
 
+Also verified:
+
+`GET /ISAPI/System/capabilities?type=all`
+
 ## Purpose
 
 Returns high-level feature flags for system, security, event, access-control, platform, audio, serial, and video-intercom features.
@@ -13,6 +17,13 @@ Returns high-level feature flags for system, security, event, access-control, pl
 ```bash
 curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
   "$ISAPI_BASE/ISAPI/System/capabilities"
+```
+
+Equivalent full capability request:
+
+```bash
+curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
+  "$ISAPI_BASE/ISAPI/System/capabilities?type=all"
 ```
 
 ## Observed Response
@@ -132,6 +143,7 @@ Content-Type: `application/xml`
 ## Integration Notes
 
 - Treat this endpoint as the first capability discovery call.
+- The `?type=all` variant returned the same top-level `DeviceCap` shape during testing.
+- `SysCap/NetworkCap/isSupportBond` differed between the top-level system capability response and `/ISAPI/System/Network/capabilities`; prefer the more specific network endpoint when configuring network behavior.
 - Several advertised features use firmware-specific paths or are not exposed through the common endpoint names tested in this documentation.
 - Firmware update and factory reset are supported by capability flag but intentionally not tested.
-

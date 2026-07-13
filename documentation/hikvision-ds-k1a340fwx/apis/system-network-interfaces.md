@@ -63,4 +63,5 @@ Content-Type: `application/xml`
 - `GET /ISAPI/System/Network/interfaces/1` returned the same interface data without the list wrapper.
 - `GET /ISAPI/System/Network/interfaces/1/ipAddress` and `/link` returned the IP and link subdocuments.
 - Common endpoints for ports, default route, routes, hostname, and top-level wireless returned `404` on this firmware.
-- See [network and Wi-Fi](system-network-wireless.md) for interface `2`, Wi-Fi status, access-point scan, and SSH.
+- See [network and Wi-Fi](system-network-wireless.md) for interface `2`, Wi-Fi status, and access-point scan.
+- See [network services and SSH](system-network-services.md) for exposed TCP ports, SSH state/control, RTSP, HTTPS, and DEV_MANAGE behavior.
