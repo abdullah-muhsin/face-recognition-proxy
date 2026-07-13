@@ -1,14 +1,14 @@
 # ESP32-WROOM-32 Development Setup
 
-Status: build, flash, reset, and monitor are working from WSL.
+Status: build works on Rocky Linux 10.2. Flash, reset, and monitor use native Linux serial devices.
 
 ## Installed
 
 - ESP-IDF: `v6.0.2`
-- IDF path: `/home/magnet-wsl/esp/esp-idf-v6.0.2`
-- Stable symlink: `/home/magnet-wsl/esp/esp-idf`
-- ESP tools cache: `/home/magnet-wsl/.espressif`
-- Python env: `/home/magnet-wsl/.espressif/python_env/idf6.0_py3.12_env`
+- IDF path: `/home/magnet/esp/esp-idf-v6.0.2`
+- Stable symlink: `/home/magnet/esp/esp-idf`
+- ESP tools cache: `/home/magnet/.espressif`
+- Python env: `/home/magnet/.espressif/python_env/idf6.0_py3.12_env`
 
 Installed ESP32 tools:
 
@@ -18,6 +18,27 @@ Installed ESP32 tools:
 - `openocd-esp32`
 - `esp-rom-elfs`
 - `esptool v5.3.1`
+- Rocky packages: `cmake`, `ninja-build`, `ccache`
+
+System packages:
+
+```bash
+sudo dnf install -y dnf-plugins-core epel-release
+sudo dnf config-manager --set-enabled crb
+sudo dnf install -y \
+  git wget flex bison gperf python3 python3-pip python3-devel \
+  gcc make cmake ninja-build ccache libusb1
+```
+
+ESP-IDF is installed from Espressif's pinned source release and uses Espressif's own tool installer for the Xtensa compiler/debugger, OpenOCD, esptool, and Python package environment:
+
+```bash
+mkdir -p "$HOME/esp"
+git clone --depth 1 --branch v6.0.2 --recursive --shallow-submodules \
+  https://github.com/espressif/esp-idf.git "$HOME/esp/esp-idf-v6.0.2"
+ln -sfn "$HOME/esp/esp-idf-v6.0.2" "$HOME/esp/esp-idf"
+"$HOME/esp/esp-idf/install.sh" esp32
+```
 
 ## Workspace Commands
 
@@ -34,7 +55,7 @@ ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 
 From the repository root, call the same scripts through `embedded/esp32-wroom-32/scripts/`.
 
-If exactly one `/dev/ttyUSB*` or `/dev/ttyACM*` exists, the scripts auto-detect it. Otherwise set `ESPPORT`.
+The port helper prefers stable `/dev/serial/by-id/*` names. If no stable name exists and exactly one `/dev/ttyUSB*` or `/dev/ttyACM*` exists, the scripts auto-detect it. Otherwise set `ESPPORT`.
 
 ## Verified
 
@@ -74,72 +95,22 @@ Set the receiver URL to the Laravel API endpoint that is reachable from the ESP3
 http://192.168.1.2/attendance-receiver/api/attendance-records
 ```
 
-## Current Hardware Blocker
+## Native Linux Serial
 
-Windows detects the ESP board's USB bridge:
-
-- Device: `CP2102 USB to UART Bridge Controller`
-- Device ID: `USB\VID_10C4&PID_EA60\0001`
-- Current status: `OK`
-- Windows port: `COM3`
-- `usbipd-win` bus ID: `1-4`
-- `usbipd-win` executable: `C:\Program Files\usbipd-win\usbipd.exe`
-
-WSL serial device:
-
-- Port: `/dev/ttyUSB0`
-- Stable ID path: `/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0`
-
-The official CP210x driver was downloaded to:
-
-```text
-C:\Users\magnet\AppData\Local\Temp\cp210x-driver\silabser.inf
-```
-
-Driver installation succeeded from elevated Windows PowerShell.
-
-## Windows Attach Steps
-
-Run these from an elevated Windows PowerShell:
-
-```powershell
-& "C:\Program Files\usbipd-win\usbipd.exe" bind --busid 1-4
-& "C:\Program Files\usbipd-win\usbipd.exe" attach --wsl --busid 1-4
-```
-
-Back in WSL:
+Plug the ESP32 USB bridge directly into the Rocky host and check for a serial device:
 
 ```bash
 ls -l /dev/ttyUSB* /dev/ttyACM*
-cd embedded/esp32-wroom-32
-ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 ```
 
-## Flash Verification
-
-`ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh` completed successfully.
-
-Detected chip:
-
-- `ESP32-D0WDQ6`
-- Revision: `v1.0`
-- Flash: `4MB`
-- MAC: `0c:b8:15:c1:9b:50`
-
-The flashed smoke firmware prints:
-
-```text
-ESP32 smoke firmware is running
-cores=2 revision=100 flash=4MB
-heartbeat
-```
+For CP210x boards, the kernel usually creates `/dev/ttyUSB0`. Prefer the stable path under `/dev/serial/by-id/` when it exists.
 
 ## Serial Permissions
 
-The current user was added to `dialout`:
+Add the current user to `dialout` if the serial device is not writable:
 
 ```bash
 sudo usermod -aG dialout "$USER"
 ```
 
-Open a fresh WSL shell after this setup so the new group membership is active. For the current session, `/dev/ttyUSB0` was temporarily opened with `sudo chmod a+rw /dev/ttyUSB0`.
+Log out and back in after this setup so the new group membership is active.

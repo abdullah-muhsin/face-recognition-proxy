@@ -10,12 +10,16 @@ case "$project" in
 esac
 
 project_path="$(cd "$project_path" && pwd)"
+build_path="$project_path/build"
 
 # shellcheck disable=SC1091
 source "$repo_root/scripts/esp32-env.sh"
 
+esp32_clear_stale_build_dir "$build_path"
+esp32_reconfigure_for_ccache "$project_path" "$build_path"
+
 if ! grep -q '^CONFIG_IDF_TARGET="esp32"$' "$project_path/sdkconfig" 2>/dev/null; then
-  idf.py -C "$project_path" -B "$project_path/build" set-target esp32
+  esp32_idf_py -C "$project_path" -B "$build_path" set-target esp32
 fi
 
-idf.py -C "$project_path" -B "$project_path/build" build
+esp32_idf_py -C "$project_path" -B "$build_path" build

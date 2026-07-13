@@ -33,7 +33,7 @@ Local-only credential memory is stored in `credentials.local.md`, which is inten
 - EHome/ISUP v5 platform access is writable. A live probe confirmed the terminal initiates outbound binary ISUP registration traffic to a configured server on port `7660`. This is not HTTP; Laravel cannot receive it directly without a real ISUP server/gateway in front.
 - User metadata is available. Raw face/fingerprint search endpoints tested on this firmware returned `notSupport`, even though enrolled user records expose `numOfFace` and `numOfFP`.
 - Event records may include `pictureURL` values. Those URLs returned JPEG images when tested; binary images are intentionally not stored in this repo.
-- The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed from this WSL/curl environment. HTTP Digest on port `80` was used for all documented calls.
+- The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed during earlier curl testing. HTTP Digest on port `80` was used for all documented calls.
 - After SSH was enabled through ISAPI, port `22` exposed Dropbear SSH. Manual SSH testing showed a protected BusyBox shell for `root`; keep SSH disabled unless maintenance access is intentionally required.
 - Wired interface `1` reports `192.0.0.64`; Wi-Fi interface `2` reports the observed reachable address `192.168.1.3`.
 - The device web UI assets were inspected to discover firmware-specific ISAPI paths. This corrected several earlier guessed paths, especially local attendance search, Wi-Fi, attendance mode, and TTS.
