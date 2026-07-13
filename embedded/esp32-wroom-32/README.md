@@ -1,4 +1,4 @@
-# ESP32 Development Setup
+# ESP32-WROOM-32 Development Setup
 
 Status: build, flash, reset, and monitor are working from WSL.
 
@@ -21,9 +21,10 @@ Installed ESP32 tools:
 
 ## Workspace Commands
 
-Default project: `firmware/esp32-smoke`
+Default project: `firmware/esp32-smoke` from this directory.
 
 ```bash
+cd embedded/esp32-wroom-32
 ./scripts/esp32-build.sh
 ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 ./scripts/esp32-monitor.sh firmware/esp32-smoke /dev/ttyUSB0
@@ -31,11 +32,14 @@ ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 ./scripts/esp32-erase-flash.sh /dev/ttyUSB0
 ```
 
+From the repository root, call the same scripts through `embedded/esp32-wroom-32/scripts/`.
+
 If exactly one `/dev/ttyUSB*` or `/dev/ttyACM*` exists, the scripts auto-detect it. Otherwise set `ESPPORT`.
 
 ## Verified
 
 ```bash
+cd embedded/esp32-wroom-32
 ./scripts/esp32-build.sh
 ```
 
@@ -82,6 +86,7 @@ Back in WSL:
 
 ```bash
 ls -l /dev/ttyUSB* /dev/ttyACM*
+cd embedded/esp32-wroom-32
 ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 ```
 

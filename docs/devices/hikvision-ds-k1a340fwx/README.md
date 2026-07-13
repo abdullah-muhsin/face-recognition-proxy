@@ -16,7 +16,13 @@ export ISAPI_USER='admin'
 export ISAPI_PASS='********'
 ```
 
-Do not hard-code the password in source code, logs, or documentation.
+Do not hard-code the password in tracked source code, logs, or shared documentation.
+
+Local-only credential memory is stored in `credentials.local.md`, which is intentionally ignored by git. That file records:
+
+- ISAPI/web login: username `admin`
+- SSH login: username `root`
+- The current shared password for both login surfaces
 
 ## Important Findings
 

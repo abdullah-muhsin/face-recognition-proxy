@@ -1,1 +1,11 @@
-firmware/**/build/
+embedded/**/firmware/**/build/
+
+docs/**/credentials.local.md
+docs/**/.env.local
+
+apps/**/.env
+apps/**/.env.*
+!apps/**/.env.example
+apps/**/vendor/
+apps/**/node_modules/
+apps/**/public/build/

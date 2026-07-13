@@ -166,6 +166,8 @@ The operator transcript also showed that `exit` and `quit` were not accepted by 
 
 Do not assume the HTTP Digest `admin` account maps to a usable SSH login. The transcript showed `admin` SSH login denied while `root` reached the protected shell after a password was supplied.
 
+The current SSH credential mapping is recorded in the git-ignored local file `../credentials.local.md`.
+
 ## HTTP Port 80
 
 Port `80` is the confirmed working management and ISAPI endpoint. It serves the Angular web UI root page and accepts HTTP Digest authentication for `/ISAPI/...`.
