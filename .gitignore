@@ -1,4 +1,5 @@
 embedded/**/firmware/**/build/
+embedded/**/firmware/**/managed_components/
 
 docs/**/credentials.local.md
 docs/**/.env.local

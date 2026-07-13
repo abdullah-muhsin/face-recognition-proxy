@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'attendance_bridge' => [
+        'token' => env('ATTENDANCE_BRIDGE_TOKEN', ''),
+    ],
+
 ];

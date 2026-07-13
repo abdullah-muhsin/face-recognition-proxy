@@ -21,13 +21,13 @@ Installed ESP32 tools:
 
 ## Workspace Commands
 
-Default project: `firmware/esp32-smoke` from this directory.
+Default project: `firmware/attendance-bridge` from this directory.
 
 ```bash
 cd embedded/esp32-wroom-32
 ./scripts/esp32-build.sh
 ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
-./scripts/esp32-monitor.sh firmware/esp32-smoke /dev/ttyUSB0
+./scripts/esp32-monitor.sh firmware/attendance-bridge /dev/ttyUSB0
 ./scripts/esp32-reset.sh /dev/ttyUSB0
 ./scripts/esp32-erase-flash.sh /dev/ttyUSB0
 ```
@@ -45,9 +45,34 @@ cd embedded/esp32-wroom-32
 
 This successfully built:
 
-- `firmware/esp32-smoke/build/bootloader/bootloader.bin`
-- `firmware/esp32-smoke/build/partition_table/partition-table.bin`
-- `firmware/esp32-smoke/build/esp32_smoke.bin`
+- `firmware/attendance-bridge/build/bootloader/bootloader.bin`
+- `firmware/attendance-bridge/build/partition_table/partition-table.bin`
+- `firmware/attendance-bridge/build/attendance_bridge.bin`
+
+## Attendance Bridge Firmware
+
+The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
+
+- Starts an open setup AP by default, named `AttendanceBridge-xxxxxx`.
+- Runs WiFi in `APSTA` mode, so setup AP and station connection can be active at the same time.
+- Stores configuration and the delivery cursor in NVS.
+- Polls the Hikvision terminal at `http://192.168.1.3` using Digest authentication with the configured username and password.
+- Uses `/ISAPI/AccessControl/AcsEvent?format=json` with a serial cursor and sends one event per Laravel POST.
+- Advances `last_serial` only after Laravel returns a 2xx response.
+- Serves the setup UI at `http://192.168.4.1/` while connected to the setup AP.
+- Serves machine status at `/api/status`.
+
+The default Hikvision settings match the current lab device:
+
+- Base URL: `http://192.168.1.3`
+- Username: `admin`
+- Password: configured in firmware defaults and editable from the setup UI
+
+Set the receiver URL to the Laravel API endpoint that is reachable from the ESP32's station network, for example:
+
+```text
+http://192.168.1.2/attendance-receiver/api/attendance-records
+```
 
 ## Current Hardware Blocker
 

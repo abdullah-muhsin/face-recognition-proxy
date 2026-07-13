@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-project="${1:-firmware/esp32-smoke}"
+project="${1:-firmware/attendance-bridge}"
 
 case "$project" in
   /*) project_path="$project" ;;

@@ -14,18 +14,25 @@ This repository is organized as a multi-part workspace for the face recognition 
 cd embedded/esp32-wroom-32
 ./scripts/esp32-build.sh
 ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
+./scripts/esp32-monitor.sh firmware/attendance-bridge /dev/ttyUSB0
 ```
+
+The default ESP32 firmware is `firmware/attendance-bridge`. It starts an open setup AP by default, joins the configured attendance LAN as a station, polls the Hikvision terminal through ISAPI Digest auth, and posts accepted events to the Laravel receiver.
 
 ## Laravel Application
 
-The Laravel application is scaffolded under `apps/attendance-receiver` and is configured for PHP 8.3 with a MariaDB/MySQL connection.
+The Laravel application is under `apps/attendance-receiver` and is configured for PHP 8.3 with a MariaDB/MySQL connection.
 
 ```bash
 cd apps/attendance-receiver
 composer install
+php artisan migrate
+php artisan test
 ```
 
 Nginx serves the app at `http://localhost/attendance-receiver`.
+
+ESP32 records are accepted at `POST /attendance-receiver/api/attendance-records` when served by nginx, or `POST /api/attendance-records` when using `php artisan serve`.
 
 ## Local Web Server
 
