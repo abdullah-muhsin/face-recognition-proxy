@@ -44,6 +44,47 @@ Verified post-change state:
 
 TCP `22` then opened as Dropbear SSH `2022.83`.
 
+## HTTP Notification Host Probe
+
+The HTTP notification host was temporarily changed while testing direct event delivery:
+
+```bash
+PUT /ISAPI/Event/notification/httpHosts/1
+PUT /ISAPI/Event/notification/httpHosts
+```
+
+Temporary target:
+
+```xml
+<HttpHostNotification version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <id>1</id>
+  <url></url>
+  <protocolType>HTTP</protocolType>
+  <parameterFormatType>XML</parameterFormatType>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>192.168.1.2</ipAddress>
+  <portNo>8088</portNo>
+  <httpAuthenticationMethod>none</httpAuthenticationMethod>
+</HttpHostNotification>
+```
+
+The device accepted the write and persisted `ipAddress` and `portNo`. It did not persist a non-empty `url`. No outbound HTTP delivery was observed for a live `AccessControllerEvent`.
+
+The host was restored after the probe:
+
+```xml
+<HttpHostNotification version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <id>1</id>
+  <url></url>
+  <protocolType>HTTP</protocolType>
+  <parameterFormatType>XML</parameterFormatType>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>0.0.0.0</ipAddress>
+  <portNo>0</portNo>
+  <httpAuthenticationMethod>none</httpAuthenticationMethod>
+</HttpHostNotification>
+```
+
 ## Local Attendance DELETE Probe
 
 The following calls were executed with an empty JSON body while probing method support:

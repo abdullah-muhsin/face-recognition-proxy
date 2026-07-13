@@ -12,7 +12,7 @@ This summary separates verified live behavior from feature flags that were adver
 | Security | Digest authentication works. Admin account list, online user, illegal-login lock, user-check, and admin access ports are readable. |
 | Access-control users | User count and user search work. One user was enrolled at test time. User records include validity, door rights, group, and face/fingerprint/card counts. |
 | Cards | Card count and card search work. Count was zero at test time. |
-| Events | Access-control event search, event total count, HTTP notification configuration, subscription capability, and live alert stream work. |
+| Events | Access-control event search, event total count, HTTP notification host read/write, subscription capability, and live alert stream work. HTTP attendance/access-controller delivery to a configured host was not observed. |
 | Event pictures | Event `pictureURL` values return JPEG images with Digest auth. One tested image was `768x432`, `44409` bytes. |
 | Reader config | Card-reader configs for reader `1` and `2` are readable. Reader `1` exposes face and fingerprint functions. |
 | Face recognition | Face recognition mode is readable and set to `normalMode`. Reader config exposes thresholds, liveness detection, and anti-attack settings. |
@@ -54,6 +54,7 @@ This summary separates verified live behavior from feature flags that were adver
 | Door config/control | Door config support is advertised, but common read paths returned `404`; remote door control is not supported by capability flag. |
 | SNAP/deploy/identity endpoints | Some returned `200` with empty body. |
 | Generic UI bundle endpoints | The web UI lists many generic endpoints that returned `notSupport` on this device. |
+| Direct HTTP event push | HTTP notification host configuration is writable, but AccessControllerEvent trigger binding was not exposed and no outbound HTTP request was observed during a live access-controller event. |
 | Write operations | User/card/fingerprint/local-attendance write method validation was tested. Destructive reset/clear/firmware/control operations were not executed. See [device state change log](device-state-change-log.md). |
 
 ## Practical Integration Shape
@@ -66,3 +67,5 @@ For an attendance integration, the safest confirmed flow is:
 4. Fetch `pictureURL` only when an image is required.
 5. Use `/ISAPI/AccessControl/UserInfo/Search?format=json` to map employee records and validity windows.
 6. Use `/ISAPI/Event/notification/alertStream` for live event streaming if long-running multipart parsing is acceptable.
+
+Do not treat `/ISAPI/Event/notification/httpHosts` as a confirmed direct attendance webhook mechanism on this firmware.

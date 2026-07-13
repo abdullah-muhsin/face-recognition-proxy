@@ -29,6 +29,7 @@ Local-only credential memory is stored in `credentials.local.md`, which is inten
 - The device is an access-control/time-attendance terminal, not a normal IP camera.
 - Full video streaming endpoints tested under `/ISAPI/Streaming/...` returned `404`.
 - Access-control events are available through both polling (`/ISAPI/AccessControl/AcsEvent`) and a live multipart stream (`/ISAPI/Event/notification/alertStream`).
+- HTTP notification host configuration is writable, but direct HTTP delivery of attendance/access-controller events was not observed during live testing. Do not treat it as a confirmed webhook path for this device firmware.
 - User metadata is available. Raw face/fingerprint search endpoints tested on this firmware returned `notSupport`, even though enrolled user records expose `numOfFace` and `numOfFP`.
 - Event records may include `pictureURL` values. Those URLs returned JPEG images when tested; binary images are intentionally not stored in this repo.
 - The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed from this WSL/curl environment. HTTP Digest on port `80` was used for all documented calls.

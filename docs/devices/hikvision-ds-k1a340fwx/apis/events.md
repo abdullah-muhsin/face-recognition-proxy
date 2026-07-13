@@ -63,6 +63,92 @@ Status: `200 OK`
 
 `GET /ISAPI/Event/notification/httpHosts/1` returned the same host without the list wrapper.
 
+### Write And Delivery Test
+
+The HTTP notification host configuration is writable, but attendance/access-controller event delivery was not observed on this firmware.
+
+Test date: `2026-07-13`.
+
+Confirmed write behavior:
+
+- `PUT /ISAPI/Event/notification/httpHosts/1` accepts a single `HttpHostNotification` XML body.
+- `PUT /ISAPI/Event/notification/httpHosts` accepts a `HttpHostNotificationList` XML body.
+- `POST /ISAPI/Event/notification/httpHosts/1` returned `methodNotAllowed`.
+- `DELETE /ISAPI/Event/notification/httpHosts` and `DELETE /ISAPI/Event/notification/httpHosts/1` returned `methodNotAllowed`.
+- `GET /ISAPI/Event/notification/httpHosts/capabilities` and `/httpHosts/1/capabilities` returned `notSupport`, even though the read/write configuration endpoints exist.
+
+Working write request shape:
+
+```bash
+curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
+  -H 'Content-Type: application/xml' \
+  -X PUT \
+  "$ISAPI_BASE/ISAPI/Event/notification/httpHosts/1" \
+  --data-binary @- <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<HttpHostNotification version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <id>1</id>
+  <url></url>
+  <protocolType>HTTP</protocolType>
+  <parameterFormatType>XML</parameterFormatType>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>192.168.1.2</ipAddress>
+  <portNo>8088</portNo>
+  <httpAuthenticationMethod>none</httpAuthenticationMethod>
+</HttpHostNotification>
+XML
+```
+
+Observed response:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<ResponseStatus version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <requestURL></requestURL>
+  <statusCode>1</statusCode>
+  <statusString>OK</statusString>
+  <subStatusCode>ok</subStatusCode>
+</ResponseStatus>
+```
+
+Important constraints observed during testing:
+
+- The device persisted `ipAddress` and `portNo`.
+- The device did not persist a non-empty `url`; reads after successful writes returned `<url></url>`.
+- `addressingFormatType: hostname` with `<hostName>192.168.1.2</hostName>` was rejected with `badXmlContent` and `errorMsg: ipAddress`.
+- Adding `<httpBroken>true</httpBroken>` was accepted in the request body but was not persisted in the readback.
+- A reachable HTTP listener was available at `192.168.1.2:8088` during the test. Test requests from the development machine reached it successfully.
+
+The device web UI bundle references `/ISAPI/Event/notification/httpHosts/%s/test`, but live probes against `/ISAPI/Event/notification/httpHosts/1/test` returned `invalidOperation` for `GET`, `PUT`, and `POST`, including when a valid `HttpHostNotification` body was supplied.
+
+Access-controller trigger probes were also negative:
+
+- `/ISAPI/Event/triggers` listed only `vmd-1`.
+- `/ISAPI/Event/triggers/vmd-1/notifications` returned an empty `EventTriggerNotificationList`.
+- Probes for `AccessControllerEvent`, `AccessControllerEvent-1`, `AccessControlEvent`, `AcsEvent`, `acs-1`, and `door-1` trigger notification paths returned `badURLFormat`.
+- Attempts to create or update an `AccessControllerEvent` trigger with `<notificationMethod>center</notificationMethod>` returned `badURLFormat`.
+
+Delivery result:
+
+- While HTTP host `1` was configured to `192.168.1.2:8088`, `/ISAPI/Event/notification/alertStream` emitted a live `AccessControllerEvent` with `currentEvent: true`.
+- The configured HTTP listener received no request from the device for that event.
+- The HTTP notification host was restored to the original empty state after testing:
+
+```xml
+<HttpHostNotification version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
+  <id>1</id>
+  <url></url>
+  <protocolType>HTTP</protocolType>
+  <parameterFormatType>XML</parameterFormatType>
+  <addressingFormatType>ipaddress</addressingFormatType>
+  <ipAddress>0.0.0.0</ipAddress>
+  <portNo>0</portNo>
+  <httpAuthenticationMethod>none</httpAuthenticationMethod>
+</HttpHostNotification>
+```
+
+Conclusion: this firmware exposes writable HTTP notification host configuration, but direct HTTP push of attendance/access-controller events is not a confirmed supported integration path.
+
 ## Subscribe Event Capability
 
 ### Request
@@ -163,6 +249,5 @@ Content-Length: 533
 ## Integration Notes
 
 - Polling event history and consuming the live alert stream are both viable.
-- The HTTP notification host is currently empty. Configure it only through deliberate `PUT`/`POST` operations; no write calls were executed during this documentation pass.
+- The HTTP notification host is currently empty. Host configuration writes work, but no attendance/access-controller HTTP delivery was observed.
 - Stream consumers must parse multipart boundaries and individual JSON parts.
-
