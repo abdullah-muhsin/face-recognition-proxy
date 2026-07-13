@@ -26,7 +26,9 @@ Do not hard-code the password in source code, logs, or documentation.
 - User metadata is available. Raw face/fingerprint search endpoints tested on this firmware returned `notSupport`, even though enrolled user records expose `numOfFace` and `numOfFP`.
 - Event records may include `pictureURL` values. Those URLs returned JPEG images when tested; binary images are intentionally not stored in this repo.
 - The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed from this WSL/curl environment. HTTP Digest on port `80` was used for all documented calls.
-- `/ISAPI/System/Network/interfaces` reports interface IP `192.0.0.64`, while the tested reachable address was `192.168.1.3`. Treat these as separate facts until the network topology is confirmed.
+- Wired interface `1` reports `192.0.0.64`; Wi-Fi interface `2` reports the observed reachable address `192.168.1.3`.
+- The device web UI assets were inspected to discover firmware-specific ISAPI paths. This corrected several earlier guessed paths, especially local attendance search, Wi-Fi, attendance mode, and TTS.
+- Non-read-only local-attendance tests were executed. The destructive calls and repair are documented in [device state change log](device-state-change-log.md).
 
 ## API Files
 
@@ -35,6 +37,8 @@ Do not hard-code the password in source code, logs, or documentation.
 - [Device information](apis/system-device-info.md)
 - [Time configuration](apis/system-time.md)
 - [Network interfaces](apis/system-network-interfaces.md)
+- [Network and Wi-Fi](apis/system-network-wireless.md)
+- [Audio and language](apis/system-audio-language.md)
 - [Algorithm information](apis/system-algorithms-info.md)
 - [Platform services](apis/system-platform-services.md)
 - [Security APIs](apis/security.md)
@@ -45,15 +49,21 @@ Do not hard-code the password in source code, logs, or documentation.
 - [Access-control status and configuration](apis/access-control-status-config.md)
 - [Card-reader and face-recognition configuration](apis/access-control-reader-face.md)
 - [Attendance configuration](apis/access-control-attendance.md)
+- [Attendance mode and verification TTS](apis/access-control-tts-attendance-mode.md)
+- [Verification plans](apis/access-control-verification-plans.md)
 - [Local attendance rules and schemas](apis/access-control-local-attendance.md)
+- [Write operation behavior](apis/access-control-write-operations.md)
 - [Image channels](apis/image-channels.md)
 - [Video intercom related-address API](apis/video-intercom.md)
 - [Picture URL media retrieval](apis/media-picture-url.md)
+- [Web UI endpoint discovery](apis/web-ui-endpoint-discovery.md)
 - [Tested unsupported or limited endpoints](apis/tested-unsupported-endpoints.md)
+- [Device state change log](device-state-change-log.md)
 
 ## External References Used For Probe Planning
 
 - Hikvision ISAPI portal: `https://tpp.hikvision.com/download/ISAPI_OTAP`
-- Hikvision product page: `https://www.hikvision.com/en/products/Access-Control-Products/Time-Attendance-Products/Value-Series/ds-k1a340fwx/`
+- Hikvision product page: `https://www.hikvision.com/en/products/Access-Control-Products/Face-Recognition-Terminals/Value-Series/ds-k1a340fwx/`
+- Hikvision datasheet PDF: `https://assets.hikvision.com/prd/public/all/doc/m000044902/DS-K1A340FWX-Face-Recognition-Terminal_Datasheet_V1.0_20220824.pdf`
 
-The files in this directory are based on live responses from this exact device and firmware. External references were only used to choose safe read-only endpoints to test.
+The files in this directory are based primarily on live responses from this exact device and firmware. External references were used for product context and probe planning.

@@ -358,5 +358,4 @@ Status: `200 OK`
 
 - Use `POST` for search endpoints. `GET` against `.../Search?format=json` returned `404`.
 - User records expose biometric counts but not raw biometric templates through the tested search endpoints.
-- Create/update/delete user endpoints are advertised but were not executed.
-
+- User/card create, modify, and delete endpoints were validated with empty bodies to identify required roots, but no valid user or card write was executed. See [write operation behavior](access-control-write-operations.md).

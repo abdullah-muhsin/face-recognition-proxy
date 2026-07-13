@@ -4,6 +4,9 @@
 
 - `GET /ISAPI/System/Network/interfaces`
 - `GET /ISAPI/System/Network/interfaces/1`
+- `GET /ISAPI/System/Network/interfaces/1/ipAddress`
+- `GET /ISAPI/System/Network/interfaces/1/link`
+- `GET /ISAPI/System/Network/interfaces/2/ipAddress`
 
 ## Purpose
 
@@ -55,7 +58,9 @@ Content-Type: `application/xml`
 
 ## Integration Notes
 
-- The endpoint reports `192.0.0.64`, but the reachable test URL was `192.168.1.3`.
+- Interface `1` reports wired/static address `192.0.0.64`.
+- Interface `2` is the Wi-Fi interface and reports dynamic address `192.168.1.3`, which was the reachable test URL.
 - `GET /ISAPI/System/Network/interfaces/1` returned the same interface data without the list wrapper.
-- Common endpoints for ports, default route, routes, hostname, wireless, and NTP server details returned `404` on this firmware.
-
+- `GET /ISAPI/System/Network/interfaces/1/ipAddress` and `/link` returned the IP and link subdocuments.
+- Common endpoints for ports, default route, routes, hostname, and top-level wireless returned `404` on this firmware.
+- See [network and Wi-Fi](system-network-wireless.md) for interface `2`, Wi-Fi status, access-point scan, and SSH.

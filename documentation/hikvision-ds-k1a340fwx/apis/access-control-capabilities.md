@@ -122,7 +122,6 @@ Content-Type: `application/xml`
 - User search and user count work.
 - Card count and card search work, but there are zero cards.
 - Access-control event search and total count work.
-- Work status, ACS config, card-reader config, face-recognition mode, event optimization, event storage, attendance key config, attendance week plan, attendance templates, and local attendance rule work.
+- Work status, ACS config, card-reader config, face-recognition mode, event optimization, event storage, attendance key config, attendance mode, verification plans, attendance week plan, attendance templates, local attendance rule, and local attendance searches work.
 - Raw face/fingerprint search endpoints tested returned `notSupport`.
 - Some capability flags are true, but common endpoint names still returned `404` or empty payloads. See [tested unsupported endpoints](tested-unsupported-endpoints.md).
-

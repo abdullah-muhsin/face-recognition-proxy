@@ -4,6 +4,9 @@
 
 - `GET /ISAPI/System/time`
 - `GET /ISAPI/System/time/capabilities`
+- `GET /ISAPI/System/time/ntpServers/capabilities`
+- `GET /ISAPI/System/time/ntpServers/1`
+- `GET /ISAPI/System/time/timeZone`
 
 ## Purpose
 
@@ -58,4 +61,5 @@ Content-Type: `application/xml`
 
 - Event timestamps are returned with the `+03:00` offset.
 - The device was configured for `NTP` mode during testing.
-
+- The configured NTP server is `time1.google.com`, port `123`, synchronize interval `60`.
+- `GET /ISAPI/System/time/timeZone` returned the plain text body `CST-3:00:00`.

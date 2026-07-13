@@ -11,9 +11,9 @@ This file records endpoints that were tested and did not produce a useful readab
 | `/ISAPI/System/Network/defaultRoute` | `GET` | `404` | Not exposed. |
 | `/ISAPI/System/Network/routes` | `GET` | `404` | Not exposed. |
 | `/ISAPI/System/Network/hostname` | `GET` | `404` | Not exposed. |
-| `/ISAPI/System/Network/wireless` | `GET` | `404` | Wireless is advertised by capability flag but not by this tested path. |
-| `/ISAPI/System/Network/wireless/capabilities` | `GET` | `404` | Not exposed. |
-| `/ISAPI/System/Network/NTP` | `GET` | `404` | System time endpoint works; NTP detail endpoint did not. |
+| `/ISAPI/System/Network/wireless` | `GET` | `404` | Wrong path for this firmware. Use `/ISAPI/System/Network/interfaces/2/wireless`. |
+| `/ISAPI/System/Network/wireless/capabilities` | `GET` | `404` | Wrong path for this firmware. Use `/ISAPI/System/Network/interfaces/2/wireless/capabilities`. |
+| `/ISAPI/System/Network/NTP` | `GET` | `404` | Wrong path for this firmware. Use `/ISAPI/System/time/ntpServers/1`. |
 | `/ISAPI/System/Network/https/capabilities` | `GET` | `404` | HTTPS is advertised through security/admin-access endpoints. |
 | `/ISAPI/System/SNAPConfig` | `GET` | `404` | `AccessControl/SNAPConfig` exists but returned empty body. |
 | `/ISAPI/System/ClientProxyWEB` | `GET` | `404` | Capability flag advertised, common endpoint not exposed. |
@@ -40,6 +40,8 @@ Conclusion: HTTPS is configured/open, but it was not usable from the test client
 | `/ISAPI/Streaming/channels/101/picture` | `GET` | `404` | Snapshot path not exposed. |
 | `/ISAPI/Video/inputs/channels` | `GET` | `404` | Not exposed. |
 | `/ISAPI/Audio/channels` | `GET` | `404` | Not exposed despite one audio output in top-level capabilities. |
+| `/ISAPI/System/USB` | `GET` | `404` | Not exposed through this path. |
+| `/ISAPI/System/Hardware` | `GET` | `404` | Not exposed through this path. |
 
 ## Intelligent / Face Library Paths
 
@@ -73,14 +75,25 @@ Conclusion: HTTPS is configured/open, but it was not usable from the test client
 | `/ISAPI/AccessControl/InputProxy/channels?format=json` | `GET` | `404` | No input proxy exposed. |
 | `/ISAPI/AccessControl/OutputProxy/channels?format=json` | `GET` | `404` | No output proxy exposed. |
 | `/ISAPI/AccessControl/AlarmOut/channels?format=json` | `GET` | `404` | Device info reports zero alarm outputs. |
-| `/ISAPI/AccessControl/TTSText?format=json` | `GET` | `404` | TTS support is advertised, but common endpoint not exposed. |
+| `/ISAPI/AccessControl/TTSText?format=json` | `GET` | `404` | Wrong path. Use `/ISAPI/AccessControl/Verification/ttsText?format=json`. |
+| `/ISAPI/AccessControl/AttendanceMode?format=json` | `GET` | `404` | Wrong path. Use `/ISAPI/AccessControl/Configuration/attendanceMode?format=json`. |
+| `/ISAPI/AccessControl/AttendanceStatusPlan?format=json` | `GET` | `404` | Not exposed. Attendance mode works through `/Configuration/attendanceMode`. |
+| `/ISAPI/AccessControl/CardDisplayCfg?format=json` | `GET` | `404` | Listed by web UI bundle but not supported by this device. |
+| `/ISAPI/AccessControl/readerList?format=json` | `GET` | `404` | Listed by web UI bundle but not supported by this device. |
+| `/ISAPI/AccessControl/CardVerificationRule?format=json` | `GET` | `404` | Listed by web UI bundle but not supported by this device. |
+| `/ISAPI/AccessControl/Configuration/NFCCfg?format=json` | `GET` | `404` | Not supported. |
+| `/ISAPI/AccessControl/Configuration/RFCardCfg?format=json` | `GET` | `404` | Not supported. |
+| `/ISAPI/AccessControl/WiegandCfg/capabilities` | `GET` | `404` | Not supported on this model/firmware. |
+| `/ISAPI/AccessControl/maskDetection?format=json` | `GET` | `404` | Not supported on this model/firmware. |
+| `/ISAPI/AccessControl/temperatureMeasureCfg?format=json` | `GET` | `404` | Not supported on this model/firmware. |
+| `/ISAPI/AccessControl/visitorParamCfg?format=json` | `GET` | `404` | Not supported on this model/firmware. |
 | `/ISAPI/AccessControl/SNAPConfig?format=json` | `GET` | `200`, empty body | Endpoint exists but returned no readable payload. |
 | `/ISAPI/AccessControl/DeployInfo?format=json` | `GET` | `200`, empty body | Endpoint exists but returned no readable payload. |
 | `/ISAPI/AccessControl/IdentityTerminal?format=json` | `GET` | `200`, empty body | Endpoint exists but returned no readable payload. |
 
-## Local Attendance Search APIs
+## Local Attendance Wrong-Path Search APIs
 
-The following `POST` search paths returned `400 invalidID` with generic paging bodies and simple explicit-ID bodies:
+The following guessed upper-case search paths returned `400 invalidID`. They are not the correct paths for this firmware. Use the lower-case paths documented in [local attendance](access-control-local-attendance.md).
 
 - `/ISAPI/AccessControl/LocalAttendance/Group/Search?format=json`
 - `/ISAPI/AccessControl/LocalAttendance/Shift/Search?format=json`
@@ -112,4 +125,3 @@ Observed error:
 | `/ISAPI/Security/securityQuestion` | `GET` | `404` | Capability flag exists, endpoint not exposed by this path. |
 | `/ISAPI/Security/securityEmail` | `GET` | `404` | Capability flag exists, endpoint not exposed by this path. |
 | `/ISAPI/Racm/SecurityLog/logServer` | `GET` | `404` | Security log server flag exists, common endpoint not exposed. |
-
