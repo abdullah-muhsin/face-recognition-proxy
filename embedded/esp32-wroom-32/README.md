@@ -79,7 +79,9 @@ The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
 - Stores configuration and the delivery cursor in NVS.
 - Polls the Hikvision terminal at `http://192.168.1.6` using Digest authentication with the configured username and password.
 - Uses `/ISAPI/AccessControl/AcsEvent?format=json` with a serial cursor and sends one event per Laravel POST.
+- Downloads each reported event picture from the Hikvision terminal and embeds it in the Laravel POST as base64 image data.
 - Advances `last_serial` only after Laravel returns a 2xx response.
+- Leaves `last_serial` unchanged when picture download, payload construction, or Laravel delivery fails, so the same event is retried.
 - Serves the setup UI at `http://192.168.4.1/` while connected to the setup AP.
 - Serves machine status at `/api/status`.
 
@@ -89,11 +91,19 @@ The default Hikvision settings match the current lab device:
 - Username: `admin`
 - Password: configured in firmware defaults and editable from the setup UI
 
-Set the receiver URL to the Laravel API endpoint that is reachable from the ESP32's station network, for example:
+Set the receiver URL to the Laravel API endpoint that is reachable from the ESP32's station network. For a cloud deployment, use the public HTTPS endpoint:
+
+```text
+https://attendance.example.com/attendance-receiver/api/attendance-records
+```
+
+For a local development receiver, use a LAN endpoint that the ESP32 can reach:
 
 ```text
 http://192.168.1.12/attendance-receiver/api/attendance-records
 ```
+
+Configure the same bridge token in Laravel's `ATTENDANCE_BRIDGE_TOKEN` and the ESP32 receiver token field.
 
 ## Native Linux Serial
 

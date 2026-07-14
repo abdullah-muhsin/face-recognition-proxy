@@ -57,6 +57,37 @@ class AttendanceRecordIngestionTest extends TestCase
             ->assertCreated();
     }
 
+    public function test_it_rejects_incomplete_picture_payloads_without_creating_a_record(): void
+    {
+        Storage::fake('local');
+
+        $payload = $this->payload();
+        unset($payload['event']['picture']['data']);
+
+        $this->postJson('/api/attendance-records', $payload)
+            ->assertUnprocessable();
+
+        $this->assertSame(0, AttendanceRecord::count());
+        Storage::disk('local')->assertMissing('attendance-record-pictures/1.jpg');
+    }
+
+    public function test_it_accepts_events_that_do_not_have_device_picture_references(): void
+    {
+        Storage::fake('local');
+
+        $payload = $this->payload();
+        unset($payload['event']['pictureURL'], $payload['event']['picture']);
+
+        $this->postJson('/api/attendance-records', $payload)
+            ->assertCreated()
+            ->assertJsonPath('picture_stored', false);
+
+        $record = AttendanceRecord::firstOrFail();
+        $this->assertNull($record->picture_path);
+        $this->assertNull($record->picture_content_type);
+        $this->assertNull($record->picture_bytes);
+    }
+
     private function payload(): array
     {
         return [

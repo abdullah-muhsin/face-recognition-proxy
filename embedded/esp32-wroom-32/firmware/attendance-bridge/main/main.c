@@ -68,9 +68,9 @@
 
 #define DEFAULT_AP_CHANNEL 6
 #define DEFAULT_POLL_INTERVAL_SECONDS 5
-#define MAX_HIKVISION_RESULTS 30
+#define MAX_HIKVISION_RESULTS 10
 #define MAX_PAGES_PER_CYCLE 5
-#define HTTP_CAPTURE_DEVICE_BYTES (28 * 1024)
+#define HTTP_CAPTURE_DEVICE_BYTES (24 * 1024)
 #define HTTP_CAPTURE_PICTURE_BYTES (64 * 1024)
 #define HTTP_CAPTURE_RECEIVER_BYTES 2048
 #define FORM_MAX_BYTES 4096
@@ -161,6 +161,7 @@ static EventGroupHandle_t s_events;
 static esp_netif_t *s_sta_netif;
 
 static const char *json_string(cJSON *object, const char *key);
+static uint32_t json_u32(cJSON *object, const char *key);
 
 static void appendf(char *buffer, size_t capacity, size_t *used, const char *fmt, ...)
 {
@@ -774,6 +775,13 @@ static esp_err_t http_capture_handler(esp_http_client_event_t *event)
         return ESP_OK;
     }
 
+    if (event->client != NULL) {
+        int current_status = esp_http_client_get_status_code(event->client);
+        if (current_status < 200 || current_status >= 300) {
+            return ESP_OK;
+        }
+    }
+
     int available = capture->capacity - capture->len - 1;
     if (available <= 0) {
         capture->overflow = true;
@@ -803,7 +811,8 @@ static esp_err_t perform_http_request_capture(const char *url,
                                               int *status_code,
                                               int *response_len,
                                               char *content_type,
-                                              size_t content_type_size)
+                                              size_t content_type_size,
+                                              bool *response_overflowed)
 {
     http_capture_t capture = {
         .data = response,
@@ -841,7 +850,7 @@ static esp_err_t perform_http_request_capture(const char *url,
         return ESP_ERR_NO_MEM;
     }
 
-    esp_http_client_set_header(client, "Accept", "*/*");
+    esp_http_client_set_header(client, "Accept", body != NULL ? "application/json" : "*/*");
     if (body != NULL) {
         esp_http_client_set_header(client, "Content-Type", "application/json");
         esp_http_client_set_post_field(client, body, strlen(body));
@@ -862,6 +871,9 @@ static esp_err_t perform_http_request_capture(const char *url,
     }
     if (content_type != NULL && content_type_size > 0) {
         copy_string(content_type, content_type_size, capture.content_type);
+    }
+    if (response_overflowed != NULL) {
+        *response_overflowed = capture.overflow;
     }
     if (capture.overflow) {
         ESP_LOGW(TAG, "HTTP response from %s exceeded %d bytes", url, response_capacity);
@@ -894,7 +906,8 @@ static esp_err_t perform_http_request(const char *url,
                                         status_code,
                                         NULL,
                                         NULL,
-                                        0);
+                                        0,
+                                        NULL);
 }
 
 static void build_device_url(const bridge_config_t *config, const char *path, char *url, size_t url_size)
@@ -990,6 +1003,24 @@ static void normalize_content_type(char *content_type)
     }
 }
 
+static bool supported_picture_content_type(const char *content_type)
+{
+    return strcmp(content_type, "image/jpeg") == 0 || strcmp(content_type, "image/png") == 0;
+}
+
+static bool picture_bytes_match_content_type(const char *content_type, const uint8_t *data, size_t len)
+{
+    if (strcmp(content_type, "image/jpeg") == 0) {
+        return len >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
+    }
+    if (strcmp(content_type, "image/png") == 0) {
+        static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        return len >= sizeof(png_signature) && memcmp(data, png_signature, sizeof(png_signature)) == 0;
+    }
+
+    return false;
+}
+
 static void event_picture_free(event_picture_t *picture)
 {
     if (picture == NULL) {
@@ -1006,23 +1037,24 @@ static bool download_event_picture(const bridge_config_t *config, cJSON *event, 
 
     const char *picture_url = json_string(event, "pictureURL");
     if (picture_url[0] == '\0') {
-        return false;
+        return true;
     }
 
     char url[768];
     if (!build_picture_url(config, picture_url, url, sizeof(url))) {
-        ESP_LOGW(TAG, "Skipping event picture because pictureURL is too long");
+        status_set_error("Picture URL is too long for serial %" PRIu32, json_u32(event, "serialNo"));
         return false;
     }
 
     uint8_t *data = malloc(HTTP_CAPTURE_PICTURE_BYTES + 1);
     if (data == NULL) {
-        ESP_LOGW(TAG, "Skipping event picture because no image buffer is available");
+        status_set_error("No memory for picture buffer on serial %" PRIu32, json_u32(event, "serialNo"));
         return false;
     }
 
     int status = 0;
     int response_len = 0;
+    bool response_overflowed = false;
     char content_type[sizeof(picture->content_type)] = "";
     esp_err_t err = perform_http_request_capture(url,
                                                  HTTP_METHOD_GET,
@@ -1036,23 +1068,40 @@ static bool download_event_picture(const bridge_config_t *config, cJSON *event, 
                                                  &status,
                                                  &response_len,
                                                  content_type,
-                                                 sizeof(content_type));
-    if (err != ESP_OK || status != 200 || response_len <= 0 || response_len >= HTTP_CAPTURE_PICTURE_BYTES) {
-        ESP_LOGW(TAG,
-                 "Skipping event picture: err=%s status=%d bytes=%d",
-                 esp_err_to_name(err),
-                 status,
-                 response_len);
+                                                 sizeof(content_type),
+                                                 &response_overflowed);
+    uint32_t serial = json_u32(event, "serialNo");
+    if (err != ESP_OK || status != 200) {
+        status_set_error("Picture download failed for serial %" PRIu32 ": err=%s status=%d",
+                         serial,
+                         esp_err_to_name(err),
+                         status);
+        free(data);
+        return false;
+    }
+    if (response_overflowed || response_len <= 0 || response_len > HTTP_CAPTURE_PICTURE_BYTES) {
+        status_set_error("Picture size is invalid for serial %" PRIu32 ": bytes=%d", serial, response_len);
         free(data);
         return false;
     }
 
     normalize_content_type(content_type);
+    if (!supported_picture_content_type(content_type)) {
+        status_set_error("Unsupported picture content type for serial %" PRIu32 ": %s",
+                         serial,
+                         content_type[0] != '\0' ? content_type : "-");
+        free(data);
+        return false;
+    }
+    if (!picture_bytes_match_content_type(content_type, data, (size_t)response_len)) {
+        status_set_error("Picture content type does not match data for serial %" PRIu32, serial);
+        free(data);
+        return false;
+    }
+
     picture->data = data;
     picture->len = (size_t)response_len;
-    copy_string(picture->content_type,
-                sizeof(picture->content_type),
-                content_type[0] != '\0' ? content_type : "image/jpeg");
+    copy_string(picture->content_type, sizeof(picture->content_type), content_type);
     return true;
 }
 
@@ -1147,13 +1196,12 @@ static char *build_receiver_payload(const bridge_config_t *config, cJSON *event,
     identity_snapshot(&identity);
 
     char *raw = cJSON_PrintUnformatted(event);
-    size_t raw_len = raw != NULL ? strlen(raw) : 4;
-    size_t picture_base64_len = 0;
-    bool has_picture = picture != NULL && picture->data != NULL && picture->len > 0;
-    if (has_picture) {
-        picture_base64_len = ((picture->len + 2) / 3) * 4;
+    if (raw == NULL) {
+        return NULL;
     }
 
+    bool has_picture = picture != NULL && picture->data != NULL && picture->len > 0;
+    size_t picture_base64_len = has_picture ? ((picture->len + 2) / 3) * 4 : 0;
     size_t string_budget = strlen(config->bridge_id) +
                            strlen(config->device_base_url) +
                            strlen(config->device_username) +
@@ -1167,12 +1215,10 @@ static char *build_receiver_payload(const bridge_config_t *config, cJSON *event,
                            strlen(json_string(event, "currentVerifyMode")) +
                            strlen(json_string(event, "attendanceStatus")) +
                            strlen(json_string(event, "pictureURL"));
-    size_t capacity = 8192 + raw_len + picture_base64_len + (string_budget * 2);
+    size_t capacity = 8192 + strlen(raw) + picture_base64_len + (string_budget * 2);
     char *payload = calloc(1, capacity);
     if (payload == NULL) {
-        if (raw != NULL) {
-            cJSON_free(raw);
-        }
+        cJSON_free(raw);
         return NULL;
     }
 
@@ -1221,13 +1267,11 @@ static char *build_receiver_payload(const bridge_config_t *config, cJSON *event,
     json_append_u32_field(&out, "statusValue", json_u32(event, "statusValue"));
     json_append_char(&out, ',');
     json_append_string_field(&out, "pictureURL", json_string(event, "pictureURL"));
-    json_appendf(&out, ",\"raw\":%s", raw != NULL ? raw : "null");
+    json_appendf(&out, ",\"raw\":%s", raw);
 
     if (has_picture) {
         json_appendf(&out, ",\"picture\":{");
-        json_append_string_field(&out,
-                                 "contentType",
-                                 picture->content_type[0] != '\0' ? picture->content_type : "image/jpeg");
+        json_append_string_field(&out, "contentType", picture->content_type);
         json_append_char(&out, ',');
         json_append_string_field(&out, "encoding", "base64");
         json_append_char(&out, ',');
@@ -1240,9 +1284,7 @@ static char *build_receiver_payload(const bridge_config_t *config, cJSON *event,
 
     json_appendf(&out, "}}");
 
-    if (raw != NULL) {
-        cJSON_free(raw);
-    }
+    cJSON_free(raw);
     if (out.overflow) {
         free(payload);
         return NULL;
@@ -1285,20 +1327,29 @@ static int poll_hikvision_once(const bridge_config_t *config)
              MAX_HIKVISION_RESULTS,
              begin_serial);
 
-    char *response = calloc(1, HTTP_CAPTURE_DEVICE_BYTES);
-    if (response == NULL) {
-        status_set_error("No memory for event response");
-        return -1;
-    }
+    static char response[HTTP_CAPTURE_DEVICE_BYTES + 1];
+    memset(response, 0, sizeof(response));
 
     int status = 0;
-    esp_err_t err = hikvision_request(config,
-                                      "/ISAPI/AccessControl/AcsEvent?format=json",
-                                      HTTP_METHOD_POST,
-                                      body,
-                                      response,
-                                      HTTP_CAPTURE_DEVICE_BYTES,
-                                      &status);
+    int response_len = 0;
+    bool response_overflowed = false;
+    char content_type[80] = "";
+    char url[256];
+    build_device_url(config, "/ISAPI/AccessControl/AcsEvent?format=json", url, sizeof(url));
+    esp_err_t err = perform_http_request_capture(url,
+                                                 HTTP_METHOD_POST,
+                                                 config->device_username,
+                                                 config->device_password,
+                                                 HTTP_AUTH_TYPE_DIGEST,
+                                                 NULL,
+                                                 body,
+                                                 response,
+                                                 sizeof(response),
+                                                 &status,
+                                                 &response_len,
+                                                 content_type,
+                                                 sizeof(content_type),
+                                                 &response_overflowed);
     xSemaphoreTake(s_state_lock, portMAX_DELAY);
     s_status.last_poll_us = esp_timer_get_time();
     xSemaphoreGive(s_state_lock);
@@ -1308,14 +1359,35 @@ static int poll_hikvision_once(const bridge_config_t *config)
         xSemaphoreTake(s_state_lock, portMAX_DELAY);
         s_status.failed_polls++;
         xSemaphoreGive(s_state_lock);
-        free(response);
+        return -1;
+    }
+    if (response_overflowed) {
+        status_set_error("AcsEvent response exceeded %d bytes", HTTP_CAPTURE_DEVICE_BYTES);
+        xSemaphoreTake(s_state_lock, portMAX_DELAY);
+        s_status.failed_polls++;
+        xSemaphoreGive(s_state_lock);
         return -1;
     }
 
-    cJSON *root = cJSON_Parse(response);
-    free(response);
+    const char *parse_end = NULL;
+    cJSON *root = cJSON_ParseWithOpts(response, &parse_end, false);
     if (root == NULL) {
-        status_set_error("AcsEvent response was not valid JSON");
+        size_t head_len = response_len < 120 ? (size_t)response_len : 120;
+        size_t tail_len = response_len < 120 ? (size_t)response_len : 120;
+        const char *tail = response_len > 120 ? response + response_len - tail_len : response;
+        char head[121];
+        char tail_buf[121];
+        memcpy(head, response, head_len);
+        head[head_len] = '\0';
+        memcpy(tail_buf, tail, tail_len);
+        tail_buf[tail_len] = '\0';
+        status_set_error("AcsEvent response was not valid JSON: status=%d bytes=%d type=%s",
+                         status,
+                         response_len,
+                         content_type[0] != '\0' ? content_type : "-");
+        ESP_LOGW(TAG, "AcsEvent parse failed near: %s", parse_end != NULL ? parse_end : "(null)");
+        ESP_LOGW(TAG, "AcsEvent head: %s", head);
+        ESP_LOGW(TAG, "AcsEvent tail: %s", tail_buf);
         return -1;
     }
 
@@ -1350,7 +1422,12 @@ static int poll_hikvision_once(const bridge_config_t *config)
     int delivered = 0;
     for (int i = 0; i < ref_count; ++i) {
         event_picture_t picture;
-        download_event_picture(config, refs[i].item, &picture);
+        if (!download_event_picture(config, refs[i].item, &picture)) {
+            xSemaphoreTake(s_state_lock, portMAX_DELAY);
+            s_status.failed_deliveries++;
+            xSemaphoreGive(s_state_lock);
+            break;
+        }
 
         char *payload = build_receiver_payload(config, refs[i].item, &picture);
         event_picture_free(&picture);

@@ -2,6 +2,17 @@
 
 Laravel application for receiving ESP32/Hikvision attendance events and viewing the ingested records.
 
+## Ingestion Contract
+
+The Laravel receiver is designed to run on a cloud/server network that may not be able to reach the Hikvision terminal directly. The ESP32 bridge is responsible for all terminal communication:
+
+- Poll the Hikvision terminal on the local attendance-device network.
+- Download the event picture from the terminal when the device reports a `pictureURL`.
+- POST the event, raw Hikvision event data, and base64-encoded picture bytes to Laravel.
+- Advance its serial cursor only after Laravel returns a 2xx response.
+
+Laravel validates and persists the posted payload. It does not store Hikvision credentials and never attempts to fetch terminal LAN picture URLs.
+
 ## Local Development
 
 ```bash
@@ -13,6 +24,8 @@ php artisan test
 ```
 
 The API endpoint is `POST /api/attendance-records` when using `php artisan serve`.
+
+Set `ATTENDANCE_BRIDGE_TOKEN` in production and configure the same token on the ESP32 bridge.
 
 ## Rocky Runtime
 

@@ -73,13 +73,13 @@ class AttendanceRecordController extends Controller
             'event.picture.encoding' => ['nullable', 'string', 'in:base64'],
             'event.picture.bytes' => ['nullable', 'integer', 'min:1', 'max:65536'],
             'event.picture.data' => ['nullable', 'string', 'max:100000'],
-            'event.raw' => ['nullable', 'array'],
+            'event.raw' => ['required', 'array'],
         ]);
 
         $device = $validated['device'];
         $event = $validated['event'];
+        $picture = $this->decodePicture($event);
         $payload = $this->payloadForStorage($request->all());
-        $eventForStorage = $payload['event'] ?? $event;
         $deviceKey = filled($device['serial_number'] ?? null)
             ? $device['serial_number']
             : $device['base_url'];
@@ -108,12 +108,12 @@ class AttendanceRecordController extends Controller
                 'attendance_status' => $event['attendanceStatus'] ?? null,
                 'status_value' => $event['statusValue'] ?? null,
                 'picture_url' => $event['pictureURL'] ?? null,
-                'raw_event' => $event['raw'] ?? $eventForStorage,
+                'raw_event' => $event['raw'],
                 'payload' => $payload,
             ],
         );
 
-        $this->storePicture($record, $event['picture'] ?? null);
+        $this->storePicture($record, $picture);
 
         return response()->json([
             'ok' => true,
@@ -155,23 +155,42 @@ class AttendanceRecordController extends Controller
         return CarbonImmutable::parse($value);
     }
 
-    private function storePicture(AttendanceRecord $record, ?array $picture): void
+    private function decodePicture(array $event): ?array
     {
-        if (! is_array($picture) || ! filled($picture['data'] ?? null)) {
-            return;
+        $picture = $event['picture'] ?? null;
+        if (! is_array($picture)) {
+            abort_if(filled($event['pictureURL'] ?? null), 422, 'Picture data is required when pictureURL is present.');
+
+            return null;
         }
 
-        abort_unless(($picture['encoding'] ?? 'base64') === 'base64', 422, 'Unsupported picture encoding.');
+        foreach (['contentType', 'encoding', 'bytes', 'data'] as $field) {
+            abort_unless(array_key_exists($field, $picture) && filled($picture[$field]), 422, "Picture {$field} is required.");
+        }
+
+        abort_unless($picture['encoding'] === 'base64', 422, 'Unsupported picture encoding.');
 
         $binary = base64_decode((string) $picture['data'], true);
         abort_if($binary === false, 422, 'Invalid picture data.');
         abort_if(strlen($binary) > 65536, 422, 'Picture data is too large.');
+        abort_unless((int) $picture['bytes'] === strlen($binary), 422, 'Picture byte count does not match data.');
 
-        if (isset($picture['bytes'])) {
-            abort_unless((int) $picture['bytes'] === strlen($binary), 422, 'Picture byte count does not match data.');
+        $contentType = $this->pictureContentType((string) $picture['contentType'], $binary);
+
+        return [
+            'binary' => $binary,
+            'content_type' => $contentType,
+        ];
+    }
+
+    private function storePicture(AttendanceRecord $record, ?array $picture): void
+    {
+        if ($picture === null) {
+            return;
         }
 
-        $contentType = $this->pictureContentType((string) ($picture['contentType'] ?? ''), $binary);
+        $binary = $picture['binary'];
+        $contentType = $picture['content_type'];
         $extension = $contentType === 'image/png' ? 'png' : 'jpg';
         $path = "attendance-record-pictures/{$record->id}.{$extension}";
 
@@ -190,22 +209,20 @@ class AttendanceRecordController extends Controller
     private function pictureContentType(string $contentType, string $binary): string
     {
         $contentType = strtolower(trim(explode(';', $contentType)[0] ?? ''));
-        if ($contentType === 'image/jpg') {
-            $contentType = 'image/jpeg';
-        }
-
-        if (! in_array($contentType, ['image/jpeg', 'image/png'], true)) {
-            if (str_starts_with($binary, "\xFF\xD8\xFF")) {
-                return 'image/jpeg';
-            }
-            if (str_starts_with($binary, "\x89PNG\r\n\x1A\n")) {
-                return 'image/png';
-            }
-        }
 
         abort_unless(in_array($contentType, ['image/jpeg', 'image/png'], true), 422, 'Unsupported picture content type.');
+        abort_unless($this->binaryMatchesContentType($contentType, $binary), 422, 'Picture content type does not match data.');
 
         return $contentType;
+    }
+
+    private function binaryMatchesContentType(string $contentType, string $binary): bool
+    {
+        return match ($contentType) {
+            'image/jpeg' => str_starts_with($binary, "\xFF\xD8\xFF"),
+            'image/png' => str_starts_with($binary, "\x89PNG\r\n\x1A\n"),
+            default => false,
+        };
     }
 
     private function payloadForStorage(array $payload): array
