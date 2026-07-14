@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\AttendanceRecord;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class AttendanceRecordIngestionTest extends TestCase
@@ -12,6 +13,7 @@ class AttendanceRecordIngestionTest extends TestCase
 
     public function test_it_stores_hikvision_attendance_record_payloads_idempotently(): void
     {
+        Storage::fake('local');
         $payload = $this->payload();
 
         $first = $this->postJson('/api/attendance-records', $payload);
@@ -30,11 +32,21 @@ class AttendanceRecordIngestionTest extends TestCase
         $this->assertSame('DS-K1A340FWX20240102V010207ENJ59360966', $record->device_key);
         $this->assertSame('1001', $record->employee_no);
         $this->assertSame('faceOrFpOrCardOrPw', $record->current_verify_mode);
+        $this->assertSame('image/jpeg', $record->picture_content_type);
+        $this->assertSame(4, $record->picture_bytes);
         $this->assertSame(75, $record->raw_event['serialNo']);
+        $this->assertArrayNotHasKey('data', $record->payload['event']['picture']);
+        $this->assertTrue($record->payload['event']['picture']['stored_separately']);
+        Storage::disk('local')->assertExists($record->picture_path);
+
+        $this->get(route('attendance-records.picture', $record))
+            ->assertOk()
+            ->assertHeader('Content-Type', 'image/jpeg');
     }
 
     public function test_it_accepts_configured_bridge_token(): void
     {
+        Storage::fake('local');
         config(['services.attendance_bridge.token' => 'secret-token']);
 
         $this->postJson('/api/attendance-records', $this->payload())
@@ -54,7 +66,7 @@ class AttendanceRecordIngestionTest extends TestCase
                 'id' => 'esp32-test',
             ],
             'device' => [
-                'base_url' => 'http://192.168.1.3',
+                'base_url' => 'http://192.168.1.6',
                 'username' => 'admin',
                 'name' => 'Time and Attendance Terminal',
                 'model' => 'DS-K1A340FWX',
@@ -71,7 +83,13 @@ class AttendanceRecordIngestionTest extends TestCase
                 'currentVerifyMode' => 'faceOrFpOrCardOrPw',
                 'attendanceStatus' => 'undefined',
                 'statusValue' => 0,
-                'pictureURL' => 'http://192.168.1.3/LOCALS/pic/acsLinkCap/test.jpeg@test',
+                'pictureURL' => 'http://192.168.1.6/LOCALS/pic/acsLinkCap/test.jpeg@test',
+                'picture' => [
+                    'contentType' => 'image/jpeg',
+                    'encoding' => 'base64',
+                    'bytes' => 4,
+                    'data' => base64_encode("\xFF\xD8\xFF\xD9"),
+                ],
                 'raw' => [
                     'serialNo' => 75,
                     'employeeNoString' => '1001',

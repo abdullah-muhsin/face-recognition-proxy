@@ -15,7 +15,7 @@
 ### Request
 
 ```bash
-nmap -sV -p22,80,443,554,8000,8443 192.168.1.3
+nmap -sV -p22,80,443,554,8000,8443 192.168.1.6
 ```
 
 ### Observed Response
@@ -33,7 +33,7 @@ PORT     STATE SERVICE        VERSION
 Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 ```
 
-Before SSH was enabled, a top-1000 `nmap -sV 192.168.1.3` scan showed only:
+Before SSH was enabled, a top-1000 `nmap -sV 192.168.1.6` scan showed only:
 
 ```text
 80/tcp   open  http
@@ -145,10 +145,10 @@ curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
 Manual SSH tests supplied by the operator showed:
 
 ```text
-ssh admin@192.168.1.3
+ssh admin@192.168.1.6
 Permission denied
 
-ssh root@192.168.1.3
+ssh root@192.168.1.6
 BusyBox v1.31.1 (2023-12-29 13:56:52 CST) built-in shell (ash)
 BusyBox v1.2.1 Protect Shell (psh svn326548) Build Time: Mar 17 2021:10:03:53
 ```
@@ -189,7 +189,7 @@ Port `443` is open and is advertised as HTTPS by `/ISAPI/Security/adminAccesses`
 ### Probe
 
 ```bash
-curl -k -I --connect-timeout 5 https://192.168.1.3/
+curl -k -I --connect-timeout 5 https://192.168.1.6/
 ```
 
 ### Observed Result
@@ -207,7 +207,7 @@ Port `554` is open and speaks RTSP.
 ### Probe
 
 ```bash
-curl -I --connect-timeout 5 rtsp://192.168.1.3/
+curl -I --connect-timeout 5 rtsp://192.168.1.6/
 ```
 
 ### Observed Response
@@ -236,7 +236,7 @@ RTSP authentication is exposed, but normal camera-style ISAPI streaming paths te
 ### Probe
 
 ```bash
-curl -I --connect-timeout 5 http://192.168.1.3:8000/
+curl -I --connect-timeout 5 http://192.168.1.6:8000/
 ```
 
 ### Observed Result
@@ -254,7 +254,7 @@ Port `8443` is open and `nmap` labels it `ssl/https-alt?`, but it did not behave
 ### Probe
 
 ```bash
-curl -k -I --connect-timeout 5 https://192.168.1.3:8443/
+curl -k -I --connect-timeout 5 https://192.168.1.6:8443/
 ```
 
 ### Observed Result

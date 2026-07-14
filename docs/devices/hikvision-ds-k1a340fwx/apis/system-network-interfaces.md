@@ -59,7 +59,7 @@ Content-Type: `application/xml`
 ## Integration Notes
 
 - Interface `1` reports wired/static address `192.0.0.64`.
-- Interface `2` is the Wi-Fi interface and reports dynamic address `192.168.1.3`, which was the reachable test URL.
+- Interface `2` is the Wi-Fi interface and reports dynamic address `192.168.1.6`, which was the reachable test URL.
 - `GET /ISAPI/System/Network/interfaces/1` returned the same interface data without the list wrapper.
 - `GET /ISAPI/System/Network/interfaces/1/ipAddress` and `/link` returned the IP and link subdocuments.
 - Common endpoints for ports, default route, routes, hostname, and top-level wireless returned `404` on this firmware.

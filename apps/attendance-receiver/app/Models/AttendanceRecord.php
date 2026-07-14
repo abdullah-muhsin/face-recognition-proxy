@@ -27,6 +27,9 @@ class AttendanceRecord extends Model
         'attendance_status',
         'status_value',
         'picture_url',
+        'picture_path',
+        'picture_content_type',
+        'picture_bytes',
         'raw_event',
         'payload',
     ];
@@ -39,6 +42,7 @@ class AttendanceRecord extends Model
             'major' => 'integer',
             'minor' => 'integer',
             'status_value' => 'integer',
+            'picture_bytes' => 'integer',
             'raw_event' => 'array',
             'payload' => 'array',
         ];

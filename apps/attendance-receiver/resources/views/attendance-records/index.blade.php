@@ -60,6 +60,7 @@
                             <th>Event</th>
                             <th>Time</th>
                             <th>Employee</th>
+                            <th>Picture</th>
                             <th>Status</th>
                             <th>Verify Mode</th>
                             <th>Device</th>
@@ -83,6 +84,21 @@
                                     <span class="muted">{{ $record->employee_no ?: '-' }}</span>
                                 </td>
                                 <td>
+                                    @if ($record->picture_path)
+                                        <a href="{{ route('attendance-records.picture', $record) }}" target="_blank" rel="noopener">
+                                            <img
+                                                class="record-picture"
+                                                src="{{ route('attendance-records.picture', $record) }}"
+                                                alt="Attendance record #{{ $record->event_serial_no }} picture"
+                                            >
+                                        </a>
+                                        <br>
+                                        <span class="muted">{{ number_format($record->picture_bytes ?? 0) }} bytes</span>
+                                    @else
+                                        <span class="muted">-</span>
+                                    @endif
+                                </td>
+                                <td>
                                     <span class="badge">{{ $record->attendance_status ?: 'undefined' }}</span><br>
                                     <span class="muted">value {{ $record->status_value ?? 0 }}</span>
                                 </td>
@@ -104,7 +120,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td class="empty" colspan="8">No attendance records received yet.</td>
+                                <td class="empty" colspan="9">No attendance records received yet.</td>
                             </tr>
                         @endforelse
                     </tbody>

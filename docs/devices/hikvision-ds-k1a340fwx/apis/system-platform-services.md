@@ -147,7 +147,7 @@ Observed result after enabling ISUP:
 
 - `PUT /ISAPI/System/Network/Ehome?centerID=1` returned `200 OK`.
 - Readback showed `enabled=true`, `ipAddress=192.168.1.2`, `portNo=7660`, `deviceID=K1A340FWXPROBE1`, `protocolVersion=v5.0`, and `registerStatus=false`.
-- The listener accepted repeated TCP connections from `192.168.1.3`.
+- The listener accepted repeated TCP connections from `192.168.1.6`.
 - Most first reads were `89` bytes. Some reads only captured the first `2` bytes before the terminal closed/retried.
 - The first payload began with hex `10 57 01 01 00 09`.
 - The ASCII-visible parts of the binary payload included the serial suffix `J59360966`, model `DS-K1A340FWX`, configured device ID `K1A340FWXPROBE1`, and the serial suffix again.

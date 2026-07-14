@@ -9,6 +9,7 @@
 #include <strings.h>
 
 #include "cJSON.h"
+#include "driver/gpio.h"
 #include "esp_chip_info.h"
 #include "esp_check.h"
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
@@ -27,6 +28,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "mbedtls/base64.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -45,7 +47,7 @@
 #endif
 
 #ifndef DEFAULT_DEVICE_BASE_URL
-#define DEFAULT_DEVICE_BASE_URL "http://192.168.1.3"
+#define DEFAULT_DEVICE_BASE_URL "http://192.168.1.6"
 #endif
 
 #ifndef DEFAULT_DEVICE_USERNAME
@@ -69,9 +71,18 @@
 #define MAX_HIKVISION_RESULTS 30
 #define MAX_PAGES_PER_CYCLE 5
 #define HTTP_CAPTURE_DEVICE_BYTES (28 * 1024)
+#define HTTP_CAPTURE_PICTURE_BYTES (64 * 1024)
 #define HTTP_CAPTURE_RECEIVER_BYTES 2048
 #define FORM_MAX_BYTES 4096
 #define HTML_MAX_BYTES 14000
+
+#ifndef BOARD_BLUE_LED_GPIO
+#define BOARD_BLUE_LED_GPIO 2
+#endif
+
+#ifndef BOARD_BLUE_LED_ACTIVE_LOW
+#define BOARD_BLUE_LED_ACTIVE_LOW 0
+#endif
 
 #define WIFI_CONNECTED_BIT BIT0
 #define POLL_NOW_BIT BIT1
@@ -121,6 +132,7 @@ typedef struct {
     int len;
     int capacity;
     bool overflow;
+    char content_type[80];
 } http_capture_t;
 
 typedef struct {
@@ -128,12 +140,27 @@ typedef struct {
     uint32_t serial;
 } event_ref_t;
 
+typedef struct {
+    uint8_t *data;
+    size_t len;
+    char content_type[80];
+} event_picture_t;
+
+typedef struct {
+    char *data;
+    size_t len;
+    size_t capacity;
+    bool overflow;
+} json_buffer_t;
+
 static bridge_config_t s_config;
 static device_identity_t s_identity;
 static runtime_status_t s_status;
 static SemaphoreHandle_t s_state_lock;
 static EventGroupHandle_t s_events;
 static esp_netif_t *s_sta_netif;
+
+static const char *json_string(cJSON *object, const char *key);
 
 static void appendf(char *buffer, size_t capacity, size_t *used, const char *fmt, ...)
 {
@@ -199,6 +226,141 @@ static uint32_t parse_u32_or(const char *value, uint32_t fallback)
     }
 
     return (uint32_t)parsed;
+}
+
+static void blue_led_set(bool on)
+{
+#if BOARD_BLUE_LED_GPIO >= 0
+    int active_level = BOARD_BLUE_LED_ACTIVE_LOW ? 0 : 1;
+    gpio_set_level((gpio_num_t)BOARD_BLUE_LED_GPIO, on ? active_level : !active_level);
+#else
+    (void)on;
+#endif
+}
+
+static void blue_led_init(void)
+{
+#if BOARD_BLUE_LED_GPIO >= 0
+    gpio_config_t config = {
+        .pin_bit_mask = 1ULL << BOARD_BLUE_LED_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&config));
+    blue_led_set(false);
+#endif
+}
+
+static void json_appendf(json_buffer_t *buffer, const char *fmt, ...)
+{
+    if (buffer->overflow || buffer->len >= buffer->capacity) {
+        buffer->overflow = true;
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(buffer->data + buffer->len, buffer->capacity - buffer->len, fmt, args);
+    va_end(args);
+
+    if (written < 0) {
+        buffer->overflow = true;
+        return;
+    }
+
+    if ((size_t)written >= buffer->capacity - buffer->len) {
+        buffer->len = buffer->capacity > 0 ? buffer->capacity - 1 : 0;
+        buffer->overflow = true;
+        return;
+    }
+
+    buffer->len += (size_t)written;
+}
+
+static void json_append_char(json_buffer_t *buffer, char value)
+{
+    if (buffer->overflow || buffer->len + 1 >= buffer->capacity) {
+        buffer->overflow = true;
+        return;
+    }
+
+    buffer->data[buffer->len++] = value;
+    buffer->data[buffer->len] = '\0';
+}
+
+static void json_append_quoted(json_buffer_t *buffer, const char *value)
+{
+    json_append_char(buffer, '"');
+    for (const unsigned char *p = (const unsigned char *)(value != NULL ? value : ""); *p != '\0'; ++p) {
+        switch (*p) {
+        case '"':
+            json_appendf(buffer, "\\\"");
+            break;
+        case '\\':
+            json_appendf(buffer, "\\\\");
+            break;
+        case '\b':
+            json_appendf(buffer, "\\b");
+            break;
+        case '\f':
+            json_appendf(buffer, "\\f");
+            break;
+        case '\n':
+            json_appendf(buffer, "\\n");
+            break;
+        case '\r':
+            json_appendf(buffer, "\\r");
+            break;
+        case '\t':
+            json_appendf(buffer, "\\t");
+            break;
+        default:
+            if (*p < 0x20) {
+                json_appendf(buffer, "\\u%04x", *p);
+            } else {
+                json_append_char(buffer, (char)*p);
+            }
+            break;
+        }
+    }
+    json_append_char(buffer, '"');
+}
+
+static void json_append_string_field(json_buffer_t *buffer, const char *name, const char *value)
+{
+    json_append_quoted(buffer, name);
+    json_append_char(buffer, ':');
+    json_append_quoted(buffer, value);
+}
+
+static void json_append_u32_field(json_buffer_t *buffer, const char *name, uint32_t value)
+{
+    json_append_quoted(buffer, name);
+    json_appendf(buffer, ":%" PRIu32, value);
+}
+
+static bool json_append_base64(json_buffer_t *buffer, const uint8_t *data, size_t len)
+{
+    if (buffer->overflow || data == NULL || len == 0) {
+        return false;
+    }
+
+    size_t written = 0;
+    int ret = mbedtls_base64_encode((unsigned char *)buffer->data + buffer->len,
+                                    buffer->capacity - buffer->len,
+                                    &written,
+                                    data,
+                                    len);
+    if (ret != 0 || written >= buffer->capacity - buffer->len) {
+        buffer->overflow = true;
+        return false;
+    }
+
+    buffer->len += written;
+    buffer->data[buffer->len] = '\0';
+    return true;
 }
 
 static void html_escape(const char *input, char *output, size_t output_size)
@@ -596,11 +758,18 @@ static esp_err_t wifi_start(void)
 
 static esp_err_t http_capture_handler(esp_http_client_event_t *event)
 {
+    http_capture_t *capture = (http_capture_t *)event->user_data;
+    if (event->event_id == HTTP_EVENT_ON_HEADER && capture != NULL && event->header_key != NULL && event->header_value != NULL) {
+        if (strcasecmp(event->header_key, "Content-Type") == 0) {
+            copy_string(capture->content_type, sizeof(capture->content_type), event->header_value);
+        }
+        return ESP_OK;
+    }
+
     if (event->event_id != HTTP_EVENT_ON_DATA || event->data == NULL || event->data_len <= 0) {
         return ESP_OK;
     }
 
-    http_capture_t *capture = (http_capture_t *)event->user_data;
     if (capture == NULL || capture->data == NULL || capture->capacity <= 0) {
         return ESP_OK;
     }
@@ -622,16 +791,19 @@ static esp_err_t http_capture_handler(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
-static esp_err_t perform_http_request(const char *url,
-                                      esp_http_client_method_t method,
-                                      const char *username,
-                                      const char *password,
-                                      esp_http_client_auth_type_t auth_type,
-                                      const char *bearer_token,
-                                      const char *body,
-                                      char *response,
-                                      int response_capacity,
-                                      int *status_code)
+static esp_err_t perform_http_request_capture(const char *url,
+                                              esp_http_client_method_t method,
+                                              const char *username,
+                                              const char *password,
+                                              esp_http_client_auth_type_t auth_type,
+                                              const char *bearer_token,
+                                              const char *body,
+                                              char *response,
+                                              int response_capacity,
+                                              int *status_code,
+                                              int *response_len,
+                                              char *content_type,
+                                              size_t content_type_size)
 {
     http_capture_t capture = {
         .data = response,
@@ -685,12 +857,44 @@ static esp_err_t perform_http_request(const char *url,
     if (status_code != NULL) {
         *status_code = esp_http_client_get_status_code(client);
     }
+    if (response_len != NULL) {
+        *response_len = capture.len;
+    }
+    if (content_type != NULL && content_type_size > 0) {
+        copy_string(content_type, content_type_size, capture.content_type);
+    }
     if (capture.overflow) {
         ESP_LOGW(TAG, "HTTP response from %s exceeded %d bytes", url, response_capacity);
     }
     esp_http_client_cleanup(client);
 
     return err;
+}
+
+static esp_err_t perform_http_request(const char *url,
+                                      esp_http_client_method_t method,
+                                      const char *username,
+                                      const char *password,
+                                      esp_http_client_auth_type_t auth_type,
+                                      const char *bearer_token,
+                                      const char *body,
+                                      char *response,
+                                      int response_capacity,
+                                      int *status_code)
+{
+    return perform_http_request_capture(url,
+                                        method,
+                                        username,
+                                        password,
+                                        auth_type,
+                                        bearer_token,
+                                        body,
+                                        response,
+                                        response_capacity,
+                                        status_code,
+                                        NULL,
+                                        NULL,
+                                        0);
 }
 
 static void build_device_url(const bridge_config_t *config, const char *path, char *url, size_t url_size)
@@ -743,6 +947,113 @@ static esp_err_t receiver_post(const bridge_config_t *config, const char *payloa
                                 response,
                                 sizeof(response),
                                 status_code);
+}
+
+static bool build_picture_url(const bridge_config_t *config, const char *picture_url, char *url, size_t url_size)
+{
+    if (picture_url == NULL || picture_url[0] == '\0' || url_size == 0) {
+        return false;
+    }
+
+    int written = 0;
+    if (valid_http_url(picture_url, false)) {
+        written = snprintf(url, url_size, "%s", picture_url);
+    } else {
+        size_t base_len = strlen(config->device_base_url);
+        bool base_has_slash = base_len > 0 && config->device_base_url[base_len - 1] == '/';
+        bool path_has_slash = picture_url[0] == '/';
+
+        if (base_has_slash && path_has_slash) {
+            written = snprintf(url, url_size, "%.*s%s", (int)(base_len - 1), config->device_base_url, picture_url);
+        } else if (!base_has_slash && !path_has_slash) {
+            written = snprintf(url, url_size, "%s/%s", config->device_base_url, picture_url);
+        } else {
+            written = snprintf(url, url_size, "%s%s", config->device_base_url, picture_url);
+        }
+    }
+
+    return written > 0 && (size_t)written < url_size;
+}
+
+static void normalize_content_type(char *content_type)
+{
+    if (content_type == NULL || content_type[0] == '\0') {
+        return;
+    }
+
+    char *semicolon = strchr(content_type, ';');
+    if (semicolon != NULL) {
+        *semicolon = '\0';
+    }
+    for (char *p = content_type; *p != '\0'; ++p) {
+        *p = (char)tolower((unsigned char)*p);
+    }
+}
+
+static void event_picture_free(event_picture_t *picture)
+{
+    if (picture == NULL) {
+        return;
+    }
+
+    free(picture->data);
+    memset(picture, 0, sizeof(*picture));
+}
+
+static bool download_event_picture(const bridge_config_t *config, cJSON *event, event_picture_t *picture)
+{
+    memset(picture, 0, sizeof(*picture));
+
+    const char *picture_url = json_string(event, "pictureURL");
+    if (picture_url[0] == '\0') {
+        return false;
+    }
+
+    char url[768];
+    if (!build_picture_url(config, picture_url, url, sizeof(url))) {
+        ESP_LOGW(TAG, "Skipping event picture because pictureURL is too long");
+        return false;
+    }
+
+    uint8_t *data = malloc(HTTP_CAPTURE_PICTURE_BYTES + 1);
+    if (data == NULL) {
+        ESP_LOGW(TAG, "Skipping event picture because no image buffer is available");
+        return false;
+    }
+
+    int status = 0;
+    int response_len = 0;
+    char content_type[sizeof(picture->content_type)] = "";
+    esp_err_t err = perform_http_request_capture(url,
+                                                 HTTP_METHOD_GET,
+                                                 config->device_username,
+                                                 config->device_password,
+                                                 HTTP_AUTH_TYPE_DIGEST,
+                                                 NULL,
+                                                 NULL,
+                                                 (char *)data,
+                                                 HTTP_CAPTURE_PICTURE_BYTES + 1,
+                                                 &status,
+                                                 &response_len,
+                                                 content_type,
+                                                 sizeof(content_type));
+    if (err != ESP_OK || status != 200 || response_len <= 0 || response_len >= HTTP_CAPTURE_PICTURE_BYTES) {
+        ESP_LOGW(TAG,
+                 "Skipping event picture: err=%s status=%d bytes=%d",
+                 esp_err_to_name(err),
+                 status,
+                 response_len);
+        free(data);
+        return false;
+    }
+
+    normalize_content_type(content_type);
+    picture->data = data;
+    picture->len = (size_t)response_len;
+    copy_string(picture->content_type,
+                sizeof(picture->content_type),
+                content_type[0] != '\0' ? content_type : "image/jpeg");
+    return true;
 }
 
 static bool extract_xml_tag(const char *xml, const char *tag, char *output, size_t output_size)
@@ -830,45 +1141,113 @@ static uint32_t json_u32(cJSON *object, const char *key)
     return 0;
 }
 
-static char *build_receiver_payload(const bridge_config_t *config, cJSON *event)
+static char *build_receiver_payload(const bridge_config_t *config, cJSON *event, const event_picture_t *picture)
 {
     device_identity_t identity;
     identity_snapshot(&identity);
 
-    cJSON *root = cJSON_CreateObject();
-    if (root == NULL) {
+    char *raw = cJSON_PrintUnformatted(event);
+    size_t raw_len = raw != NULL ? strlen(raw) : 4;
+    size_t picture_base64_len = 0;
+    bool has_picture = picture != NULL && picture->data != NULL && picture->len > 0;
+    if (has_picture) {
+        picture_base64_len = ((picture->len + 2) / 3) * 4;
+    }
+
+    size_t string_budget = strlen(config->bridge_id) +
+                           strlen(config->device_base_url) +
+                           strlen(config->device_username) +
+                           strlen(identity.device_name) +
+                           strlen(identity.model) +
+                           strlen(identity.serial_number) +
+                           strlen(identity.mac_address) +
+                           strlen(json_string(event, "time")) +
+                           strlen(json_string(event, "employeeNoString")) +
+                           strlen(json_string(event, "name")) +
+                           strlen(json_string(event, "currentVerifyMode")) +
+                           strlen(json_string(event, "attendanceStatus")) +
+                           strlen(json_string(event, "pictureURL"));
+    size_t capacity = 8192 + raw_len + picture_base64_len + (string_budget * 2);
+    char *payload = calloc(1, capacity);
+    if (payload == NULL) {
+        if (raw != NULL) {
+            cJSON_free(raw);
+        }
         return NULL;
     }
 
-    cJSON_AddStringToObject(root, "schema", "hikvision.acs_event.v1");
-    cJSON_AddStringToObject(root, "firmware", FIRMWARE_VERSION);
+    json_buffer_t out = {
+        .data = payload,
+        .len = 0,
+        .capacity = capacity,
+        .overflow = false,
+    };
 
-    cJSON *bridge = cJSON_AddObjectToObject(root, "bridge");
-    cJSON_AddStringToObject(bridge, "id", config->bridge_id);
+    json_append_char(&out, '{');
+    json_append_string_field(&out, "schema", "hikvision.acs_event.v1");
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "firmware", FIRMWARE_VERSION);
+    json_appendf(&out, ",\"bridge\":{");
+    json_append_string_field(&out, "id", config->bridge_id);
+    json_appendf(&out, "},\"device\":{");
+    json_append_string_field(&out, "base_url", config->device_base_url);
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "username", config->device_username);
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "name", identity.device_name);
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "model", identity.model);
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "serial_number", identity.serial_number);
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "mac_address", identity.mac_address);
+    json_appendf(&out, "},\"event\":{");
+    json_append_u32_field(&out, "serialNo", json_u32(event, "serialNo"));
+    json_append_char(&out, ',');
+    json_append_u32_field(&out, "major", json_u32(event, "major"));
+    json_append_char(&out, ',');
+    json_append_u32_field(&out, "minor", json_u32(event, "minor"));
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "time", json_string(event, "time"));
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "employeeNoString", json_string(event, "employeeNoString"));
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "name", json_string(event, "name"));
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "currentVerifyMode", json_string(event, "currentVerifyMode"));
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "attendanceStatus", json_string(event, "attendanceStatus"));
+    json_append_char(&out, ',');
+    json_append_u32_field(&out, "statusValue", json_u32(event, "statusValue"));
+    json_append_char(&out, ',');
+    json_append_string_field(&out, "pictureURL", json_string(event, "pictureURL"));
+    json_appendf(&out, ",\"raw\":%s", raw != NULL ? raw : "null");
 
-    cJSON *device = cJSON_AddObjectToObject(root, "device");
-    cJSON_AddStringToObject(device, "base_url", config->device_base_url);
-    cJSON_AddStringToObject(device, "username", config->device_username);
-    cJSON_AddStringToObject(device, "name", identity.device_name);
-    cJSON_AddStringToObject(device, "model", identity.model);
-    cJSON_AddStringToObject(device, "serial_number", identity.serial_number);
-    cJSON_AddStringToObject(device, "mac_address", identity.mac_address);
+    if (has_picture) {
+        json_appendf(&out, ",\"picture\":{");
+        json_append_string_field(&out,
+                                 "contentType",
+                                 picture->content_type[0] != '\0' ? picture->content_type : "image/jpeg");
+        json_append_char(&out, ',');
+        json_append_string_field(&out, "encoding", "base64");
+        json_append_char(&out, ',');
+        json_append_u32_field(&out, "bytes", (uint32_t)picture->len);
+        json_appendf(&out, ",\"data\":\"");
+        json_append_base64(&out, picture->data, picture->len);
+        json_append_char(&out, '"');
+        json_append_char(&out, '}');
+    }
 
-    cJSON *out_event = cJSON_AddObjectToObject(root, "event");
-    cJSON_AddNumberToObject(out_event, "serialNo", json_u32(event, "serialNo"));
-    cJSON_AddNumberToObject(out_event, "major", json_u32(event, "major"));
-    cJSON_AddNumberToObject(out_event, "minor", json_u32(event, "minor"));
-    cJSON_AddStringToObject(out_event, "time", json_string(event, "time"));
-    cJSON_AddStringToObject(out_event, "employeeNoString", json_string(event, "employeeNoString"));
-    cJSON_AddStringToObject(out_event, "name", json_string(event, "name"));
-    cJSON_AddStringToObject(out_event, "currentVerifyMode", json_string(event, "currentVerifyMode"));
-    cJSON_AddStringToObject(out_event, "attendanceStatus", json_string(event, "attendanceStatus"));
-    cJSON_AddNumberToObject(out_event, "statusValue", json_u32(event, "statusValue"));
-    cJSON_AddStringToObject(out_event, "pictureURL", json_string(event, "pictureURL"));
-    cJSON_AddItemToObject(out_event, "raw", cJSON_Duplicate(event, true));
+    json_appendf(&out, "}}");
 
-    char *payload = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
+    if (raw != NULL) {
+        cJSON_free(raw);
+    }
+    if (out.overflow) {
+        free(payload);
+        return NULL;
+    }
+
     return payload;
 }
 
@@ -970,7 +1349,11 @@ static int poll_hikvision_once(const bridge_config_t *config)
 
     int delivered = 0;
     for (int i = 0; i < ref_count; ++i) {
-        char *payload = build_receiver_payload(config, refs[i].item);
+        event_picture_t picture;
+        download_event_picture(config, refs[i].item, &picture);
+
+        char *payload = build_receiver_payload(config, refs[i].item, &picture);
+        event_picture_free(&picture);
         if (payload == NULL) {
             status_set_error("No memory for receiver payload");
             break;
@@ -1032,6 +1415,7 @@ static void poll_task(void *arg)
         }
 
         int pages = 0;
+        blue_led_set(true);
         while (pages < MAX_PAGES_PER_CYCLE) {
             config_snapshot(&config);
             int delivered = poll_hikvision_once(&config);
@@ -1041,6 +1425,7 @@ static void poll_task(void *arg)
             pages++;
             vTaskDelay(pdMS_TO_TICKS(250));
         }
+        blue_led_set(false);
     }
 }
 
@@ -1415,6 +1800,7 @@ void app_main(void)
     ESP_LOGI(TAG, "ESP32 attendance bridge firmware %s", FIRMWARE_VERSION);
     ESP_LOGI(TAG, "cores=%d revision=%d", chip_info.cores, chip_info.revision);
 
+    blue_led_init();
     ESP_ERROR_CHECK(wifi_start());
     ESP_ERROR_CHECK(start_web_server());
     xTaskCreate(poll_task, "poll_task", 12288, NULL, 5, NULL);

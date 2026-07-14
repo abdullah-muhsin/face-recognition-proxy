@@ -186,7 +186,7 @@ A later event contained a face/verification picture reference. Sensitive fields 
   "currentVerifyMode": "faceOrFpOrCardOrPw",
   "attendanceStatus": "undefined",
   "statusValue": 0,
-  "pictureURL": "http://192.168.1.3/LOCALS/pic/acsLinkCap/[redacted].jpeg@[redacted]",
+  "pictureURL": "http://192.168.1.6/LOCALS/pic/acsLinkCap/[redacted].jpeg@[redacted]",
   "picturesNumber": 1
 }
 ```

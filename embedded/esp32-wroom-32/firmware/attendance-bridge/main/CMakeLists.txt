@@ -5,6 +5,7 @@ idf_component_register(
         esp_event
         esp_http_client
         esp_http_server
+        esp_driver_gpio
         esp_netif
         esp_timer
         esp_wifi

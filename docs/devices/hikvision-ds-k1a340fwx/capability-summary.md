@@ -8,7 +8,7 @@ This summary separates verified live behavior from feature flags that were adver
 | --- | --- |
 | Device identity | Model, firmware, serial number, MAC address, hardware/BSP/DSP versions are available from `/ISAPI/System/deviceInfo`. |
 | Time | Current time, time capabilities, time zone, and NTP server configuration are available. Device was in NTP mode with `+03:00` timestamps. |
-| Network | Wired interface `1`, Wi-Fi interface `2`, Wi-Fi status, access-point scan, SSH state/control, and exposed TCP services are documented. Interface `2` reports the observed reachable IP `192.168.1.3`. |
+| Network | Wired interface `1`, Wi-Fi interface `2`, Wi-Fi status, access-point scan, SSH state/control, and exposed TCP services are documented. Interface `2` reports the observed reachable IP `192.168.1.6`. |
 | Security | Digest authentication works. Admin account list, online user, illegal-login lock, user-check, and admin access ports are readable. |
 | Access-control users | User count and user search work. One user was enrolled at test time. User records include validity, door rights, group, and face/fingerprint/card counts. |
 | Cards | Card count and card search work. Count was zero at test time. |

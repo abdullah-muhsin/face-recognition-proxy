@@ -131,7 +131,7 @@ button,
 table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 1080px;
+    min-width: 1160px;
 }
 
 th,
@@ -164,6 +164,16 @@ code {
     font-size: 12px;
     font-weight: 700;
     white-space: nowrap;
+}
+
+.record-picture {
+    display: block;
+    width: 96px;
+    height: 54px;
+    border: 1px solid #d7dde6;
+    border-radius: 6px;
+    object-fit: cover;
+    background: #eef2f6;
 }
 
 details {
