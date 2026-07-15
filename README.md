@@ -4,7 +4,7 @@ This repository is organized as a multi-part workspace for the face recognition 
 
 ## Structure
 
-- `apps/attendance-receiver` - Laravel application served at `/attendance-receiver`.
+- `apps/attendance-receiver` - Laravel application for the hosted attendance receiver demo and optional local `/attendance-receiver` runtime.
 - `embedded/esp32-wroom-32` - ESP32-WROOM-32 development firmware and helper scripts.
 - `docs/devices/hikvision-ds-k1a340fwx` - Hikvision DS-K1A340FWX terminal documentation and API notes.
 
@@ -19,11 +19,22 @@ ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 ./scripts/esp32-monitor.sh firmware/attendance-bridge /dev/ttyUSB0
 ```
 
-The default ESP32 firmware is `firmware/attendance-bridge`. It starts an open setup AP by default, joins the configured attendance LAN as a station, polls the Hikvision terminal through ISAPI Digest auth, and posts accepted events to the Laravel receiver.
+The default ESP32 firmware is `firmware/attendance-bridge`. It starts an open
+setup AP by default, joins the configured attendance LAN as a station, polls the
+Hikvision terminal through ISAPI Digest auth, and posts accepted events to the
+Laravel receiver. By default, that bridge posts to the hosted demo receiver at
+`http://209.42.26.200:8001/api/attendance-records`; override the receiver URL in
+the firmware setup UI or `local_defaults.h` if you need a private endpoint.
 
 ## Laravel Application
 
-The Laravel application is under `apps/attendance-receiver` and is configured for PHP 8.3 with a MariaDB/MySQL connection.
+The Laravel application is under `apps/attendance-receiver`. The hosted demo
+uses the container runtime at `http://209.42.26.200:8001`, with SQLite-backed
+runtime storage under `~/attendance-receiver-runtime` on the VPS. The bridge API
+endpoint is `http://209.42.26.200:8001/api/attendance-records`.
+
+The Rocky PHP-FPM helper remains available for local/dev deployments and uses a
+MariaDB/MySQL connection.
 
 Rocky Linux 10 packages needed for the Laravel/nginx and ESP32 build sides:
 

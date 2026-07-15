@@ -58,7 +58,7 @@
 #endif
 
 #ifndef DEFAULT_RECEIVER_URL
-#define DEFAULT_RECEIVER_URL "http://192.168.1.12/attendance-receiver/api/attendance-records"
+#define DEFAULT_RECEIVER_URL "http://209.42.26.200:8001/api/attendance-records"
 #endif
 
 #ifndef DEFAULT_RECEIVER_TOKEN

@@ -91,13 +91,21 @@ The default Hikvision settings match the current lab device:
 - Username: `admin`
 - Password: configured in firmware defaults and editable from the setup UI
 
-Set the receiver URL to the Laravel API endpoint that is reachable from the ESP32's station network. For a cloud deployment, use the public HTTPS endpoint:
+The bridge now defaults to the hosted demo receiver:
 
 ```text
-https://attendance.example.com/attendance-receiver/api/attendance-records
+http://209.42.26.200:8001/api/attendance-records
 ```
 
-For a local development receiver, use a LAN endpoint that the ESP32 can reach:
+This default is applied when the bridge has no saved receiver URL in NVS. An
+already-configured ESP32 keeps its saved URL until you change it through the
+setup UI or erase flash.
+
+If you run your own receiver, enter the full `/api/attendance-records` URL that
+the ESP32 can reach from its station network.
+
+For a local development receiver, you can still point it at a LAN endpoint that
+the ESP32 can reach:
 
 ```text
 http://192.168.1.12/attendance-receiver/api/attendance-records
