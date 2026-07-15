@@ -45,3 +45,21 @@ The nginx-served endpoints are:
 - `GET /attendance-receiver/attendance-records`
 - `POST /attendance-receiver/api/attendance-records`
 - `PUT /attendance-receiver/api/attendance-records/{attendanceRecord}/picture`
+
+## Container Runtime
+
+For a lightweight demo deployment, use the container helper from the workspace
+root:
+
+```bash
+ATTENDANCE_RECEIVER_PUBLIC_URL=http://209.42.26.200:8001 \
+ATTENDANCE_RECEIVER_HOST_PORT=8001 \
+./scripts/rocky-deploy-attendance-receiver-container.sh
+```
+
+The container helper builds the Laravel receiver image, generates and preserves
+an application key, stores SQLite and uploaded pictures under
+`~/attendance-receiver-runtime`, runs migrations on startup, and binds Apache to
+`127.0.0.1:8001` by default. Install `deploy/nginx/attendance-receiver.conf` as
+`/etc/nginx/conf.d/attendance-receiver.conf` to expose it through host nginx on
+`http://209.42.26.200:8001`.

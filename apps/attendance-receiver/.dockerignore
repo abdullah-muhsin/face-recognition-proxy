@@ -1,0 +1,15 @@
+.env
+.git
+.phpunit.cache
+database/database.sqlite
+node_modules
+npm-debug.log
+public/build
+storage/app/private/*
+storage/app/public/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/testing/*
+storage/framework/views/*
+storage/logs/*
+vendor
