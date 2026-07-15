@@ -47,7 +47,7 @@
 #endif
 
 #ifndef DEFAULT_DEVICE_BASE_URL
-#define DEFAULT_DEVICE_BASE_URL "http://192.168.1.6"
+#define DEFAULT_DEVICE_BASE_URL "http://192.168.1.200"
 #endif
 
 #ifndef DEFAULT_DEVICE_USERNAME

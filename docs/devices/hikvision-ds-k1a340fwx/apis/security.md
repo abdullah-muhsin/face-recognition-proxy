@@ -162,7 +162,7 @@ Port sanity check from the test machine:
 8000/tcp  open
 ```
 
-HTTPS note: `curl -k --digest ... https://192.168.1.6/...` failed during TLS handshake from this environment. See [network services and SSH](system-network-services.md) for the fuller port-level scan, including RTSP, SSH, and TCP `8443`.
+HTTPS note: `curl -k --digest ... https://192.168.1.200/...` failed during TLS handshake from this environment. See [network services and SSH](system-network-services.md) for the fuller port-level scan, including RTSP, SSH, and TCP `8443`.
 
 ## Illegal Login Lock
 

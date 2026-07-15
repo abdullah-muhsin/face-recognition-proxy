@@ -5,7 +5,7 @@
 Event records may include URLs like:
 
 ```text
-http://192.168.1.6/LOCALS/pic/acsLinkCap/...jpeg@WEB...
+http://192.168.1.200/LOCALS/pic/acsLinkCap/...jpeg@WEB...
 ```
 
 These are not `/ISAPI/...` paths, but they are returned by ISAPI event search and are part of the integration surface for verification/capture images.
@@ -21,7 +21,7 @@ Use the exact `pictureURL` returned by `/ISAPI/AccessControl/AcsEvent`.
 ```bash
 curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
   -o event-picture.jpg \
-  'http://192.168.1.6/LOCALS/pic/acsLinkCap/[redacted].jpeg@[redacted]'
+  'http://192.168.1.200/LOCALS/pic/acsLinkCap/[redacted].jpeg@[redacted]'
 ```
 
 ## Observed Response Metadata

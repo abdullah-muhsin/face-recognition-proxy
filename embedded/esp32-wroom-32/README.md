@@ -77,7 +77,7 @@ The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
 - Starts an open setup AP by default, named `AttendanceBridge-xxxxxx`.
 - Runs WiFi in `APSTA` mode, so setup AP and station connection can be active at the same time.
 - Stores configuration and the delivery cursor in NVS.
-- Polls the Hikvision terminal at `http://192.168.1.6` using Digest authentication with the configured username and password.
+- Polls the Hikvision terminal at `http://192.168.1.200` using Digest authentication with the configured username and password.
 - Uses `/ISAPI/AccessControl/AcsEvent?format=json` with a serial cursor and sends one event per Laravel POST.
 - Downloads each reported event picture from the Hikvision terminal and embeds it in the Laravel POST as base64 image data.
 - Advances `last_serial` only after Laravel returns a 2xx response.
@@ -87,7 +87,7 @@ The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
 
 The default Hikvision settings match the current lab device:
 
-- Base URL: `http://192.168.1.6`
+- Base URL: `http://192.168.1.200`
 - Username: `admin`
 - Password: configured in firmware defaults and editable from the setup UI
 

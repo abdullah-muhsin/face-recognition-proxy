@@ -95,7 +95,7 @@ curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
 <IPAddress version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">
   <ipVersion>v4</ipVersion>
   <addressingType>dynamic</addressingType>
-  <ipAddress>192.168.1.6</ipAddress>
+  <ipAddress>192.168.1.200</ipAddress>
   <subnetMask>255.255.255.0</subnetMask>
   <DefaultGateway>
     <ipAddress>192.168.1.1</ipAddress>
@@ -151,7 +151,7 @@ curl --digest -u "$ISAPI_USER:$ISAPI_PASS" \
   <enabled>true</enabled>
   <status>success</status>
   <ssid>[redacted]</ssid>
-  <ipAddress>192.168.1.6</ipAddress>
+  <ipAddress>192.168.1.200</ipAddress>
 </WirelessConnectStatus>
 ```
 
@@ -167,6 +167,6 @@ Observed response contained four nearby access points. SSIDs are redacted in thi
 ## Integration Notes
 
 - Interface `1` is the wired/static interface and reports `192.0.0.64`.
-- Interface `2` is the Wi-Fi interface and reports the observed reachable address `192.168.1.6`.
+- Interface `2` is the Wi-Fi interface and reports the observed reachable address `192.168.1.200`.
 - Do not store the `sharedKey` returned by the Wi-Fi API in application logs or documentation.
 - SSH state/control and port-level service behavior are documented separately in [network services and SSH](system-network-services.md).

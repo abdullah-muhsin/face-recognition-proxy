@@ -97,7 +97,7 @@ class AttendanceRecordIngestionTest extends TestCase
                 'id' => 'esp32-test',
             ],
             'device' => [
-                'base_url' => 'http://192.168.1.6',
+                'base_url' => 'http://192.168.1.200',
                 'username' => 'admin',
                 'name' => 'Time and Attendance Terminal',
                 'model' => 'DS-K1A340FWX',
@@ -114,7 +114,7 @@ class AttendanceRecordIngestionTest extends TestCase
                 'currentVerifyMode' => 'faceOrFpOrCardOrPw',
                 'attendanceStatus' => 'undefined',
                 'statusValue' => 0,
-                'pictureURL' => 'http://192.168.1.6/LOCALS/pic/acsLinkCap/test.jpeg@test',
+                'pictureURL' => 'http://192.168.1.200/LOCALS/pic/acsLinkCap/test.jpeg@test',
                 'picture' => [
                     'contentType' => 'image/jpeg',
                     'encoding' => 'base64',

@@ -4,14 +4,14 @@ Observed device: Hikvision `DS-K1A340FWX` Time and Attendance Terminal.
 
 Test date: `2026-07-13`.
 
-Observed access URL: `http://192.168.1.6`.
+Observed access URL: `http://192.168.1.200`.
 
 Authentication: HTTP Digest.
 
 Use credential placeholders in all examples:
 
 ```bash
-export ISAPI_BASE='http://192.168.1.6'
+export ISAPI_BASE='http://192.168.1.200'
 export ISAPI_USER='admin'
 export ISAPI_PASS='********'
 ```
@@ -35,7 +35,7 @@ Local-only credential memory is stored in `credentials.local.md`, which is inten
 - Event records may include `pictureURL` values. Those URLs returned JPEG images when tested; binary images are intentionally not stored in this repo.
 - The device advertises HTTPS on port `443`, and the port is open, but TLS handshaking failed during earlier curl testing. HTTP Digest on port `80` was used for all documented calls.
 - After SSH was enabled through ISAPI, port `22` exposed Dropbear SSH. Manual SSH testing showed a protected BusyBox shell for `root`; keep SSH disabled unless maintenance access is intentionally required.
-- Wired interface `1` reports `192.0.0.64`; Wi-Fi interface `2` reports the observed reachable address `192.168.1.6`.
+- Wired interface `1` reports `192.0.0.64`; Wi-Fi interface `2` reports the observed reachable address `192.168.1.200`.
 - The device web UI assets were inspected to discover firmware-specific ISAPI paths. This corrected several earlier guessed paths, especially local attendance search, Wi-Fi, attendance mode, and TTS.
 - Non-read-only local-attendance tests were executed. The destructive calls and repair are documented in [device state change log](device-state-change-log.md).
 

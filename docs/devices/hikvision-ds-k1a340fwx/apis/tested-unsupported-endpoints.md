@@ -22,8 +22,8 @@ This file records endpoints that were tested and did not produce a useful readab
 
 | Test | Result |
 | --- | --- |
-| TCP connect to `192.168.1.6:443` | Open |
-| `curl -k --digest https://192.168.1.6/ISAPI/System/deviceInfo` | TLS handshake failure |
+| TCP connect to `192.168.1.200:443` | Open |
+| `curl -k --digest https://192.168.1.200/ISAPI/System/deviceInfo` | TLS handshake failure |
 | `curl --tlsv1.2 --tls-max 1.2` | TLS handshake failure |
 | `curl --tlsv1.0` / `--tlsv1.1` | Local OpenSSL/curl reported protocols unavailable |
 

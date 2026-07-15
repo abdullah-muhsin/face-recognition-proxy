@@ -139,7 +139,7 @@ Verified temporary state:
 </Ehome>
 ```
 
-A direct TCP listener on `192.168.1.2:7660` accepted repeated connections from the terminal at `192.168.1.6`. The first payloads were binary ISUP registration attempts. They included visible strings for serial suffix `J59360966`, model `DS-K1A340FWX`, and configured device ID `K1A340FWXPROBE1`.
+A direct TCP listener on `192.168.1.2:7660` accepted repeated connections from the terminal at `192.168.1.200`. The first payloads were binary ISUP registration attempts. They included visible strings for serial suffix `J59360966`, model `DS-K1A340FWX`, and configured device ID `K1A340FWXPROBE1`.
 
 Representative payload prefix:
 
