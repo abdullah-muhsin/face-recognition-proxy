@@ -6,14 +6,14 @@ use App\Models\AttendanceRecord;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AttendanceRecordController extends Controller
 {
-    private const MAX_PICTURE_BYTES = 73728;
-    private const MAX_PICTURE_BASE64_CHARACTERS = 98304;
+    private const MAX_PICTURE_BYTES = 2097152;
+    private const PICTURE_CONTENT_TYPE = 'image/jpeg';
 
     public function index(Request $request): View
     {
@@ -70,70 +70,169 @@ class AttendanceRecordController extends Controller
             'event.currentVerifyMode' => ['nullable', 'string', 'max:80'],
             'event.attendanceStatus' => ['nullable', 'string', 'max:80'],
             'event.statusValue' => ['nullable', 'integer', 'min:0', 'max:65535'],
-            'event.pictureURL' => ['nullable', 'string', 'max:2048'],
-            'event.picture' => ['nullable', 'array'],
-            'event.picture.contentType' => ['nullable', 'string', 'max:120'],
-            'event.picture.encoding' => ['nullable', 'string', 'in:base64'],
-            'event.picture.bytes' => ['nullable', 'integer', 'min:1', 'max:'.self::MAX_PICTURE_BYTES],
-            'event.picture.data' => ['nullable', 'string', 'max:'.self::MAX_PICTURE_BASE64_CHARACTERS],
+            'event.picture_available' => ['required', 'boolean'],
+            'event.pictureURL' => ['prohibited'],
+            'event.picture' => ['prohibited'],
             'event.raw' => ['required', 'array'],
+            'event.raw.pictureURL' => ['prohibited'],
+            'event.raw.picture' => ['prohibited'],
         ]);
 
         $device = $validated['device'];
         $event = $validated['event'];
-        $picture = $this->decodePicture($event);
-        $payload = $this->payloadForStorage($request->all());
+        $rawEvent = $request->input('event.raw', []);
+        $pictureExpected = (bool) $event['picture_available'];
+        $payload = $validated;
+        $payload['event']['raw'] = $rawEvent;
         $deviceKey = filled($device['serial_number'] ?? null)
             ? $device['serial_number']
             : $device['base_url'];
 
-        $record = AttendanceRecord::updateOrCreate(
-            [
-                'bridge_id' => $validated['bridge']['id'],
-                'device_key' => $deviceKey,
-                'event_serial_no' => $event['serialNo'],
-            ],
-            [
-                'schema' => $validated['schema'],
-                'firmware' => $validated['firmware'] ?? null,
-                'device_base_url' => $device['base_url'],
-                'device_username' => $device['username'] ?? null,
-                'device_name' => $device['name'] ?? null,
-                'device_model' => $device['model'] ?? null,
-                'device_serial_number' => $device['serial_number'] ?? null,
-                'device_mac_address' => $device['mac_address'] ?? null,
-                'event_time' => $this->parseEventTime($event['time'] ?? null),
-                'major' => $event['major'] ?? null,
-                'minor' => $event['minor'] ?? null,
-                'employee_no' => $event['employeeNoString'] ?? null,
-                'employee_name' => $event['name'] ?? null,
-                'current_verify_mode' => $event['currentVerifyMode'] ?? null,
-                'attendance_status' => $event['attendanceStatus'] ?? null,
-                'status_value' => $event['statusValue'] ?? null,
-                'picture_url' => $event['pictureURL'] ?? null,
-                'raw_event' => $event['raw'],
-                'payload' => $payload,
-            ],
-        );
+        $record = AttendanceRecord::firstOrNew([
+            'bridge_id' => $validated['bridge']['id'],
+            'device_key' => $deviceKey,
+            'event_serial_no' => $event['serialNo'],
+        ]);
 
-        $this->storePicture($record, $picture);
+        abort_if($record->exists && (bool) $record->picture_expected !== $pictureExpected, 409, 'Picture expectation changed for existing event.');
+
+        $record->fill([
+            'schema' => $validated['schema'],
+            'firmware' => $validated['firmware'] ?? null,
+            'device_base_url' => $device['base_url'],
+            'device_username' => $device['username'] ?? null,
+            'device_name' => $device['name'] ?? null,
+            'device_model' => $device['model'] ?? null,
+            'device_serial_number' => $device['serial_number'] ?? null,
+            'device_mac_address' => $device['mac_address'] ?? null,
+            'event_time' => $this->parseEventTime($event['time'] ?? null),
+            'major' => $event['major'] ?? null,
+            'minor' => $event['minor'] ?? null,
+            'employee_no' => $event['employeeNoString'] ?? null,
+            'employee_name' => $event['name'] ?? null,
+            'current_verify_mode' => $event['currentVerifyMode'] ?? null,
+            'attendance_status' => $event['attendanceStatus'] ?? null,
+            'status_value' => $event['statusValue'] ?? null,
+            'picture_expected' => $pictureExpected,
+            'raw_event' => $rawEvent,
+            'payload' => $payload,
+        ]);
+        $record->save();
+
+        $pictureUploadRequired = $record->picture_expected && ! filled($record->picture_path);
 
         return response()->json([
             'ok' => true,
             'created' => $record->wasRecentlyCreated,
             'id' => $record->id,
             'event_serial_no' => $record->event_serial_no,
+            'picture_upload_required' => $pictureUploadRequired,
+            'picture_upload_url' => $pictureUploadRequired
+                ? rtrim($request->url(), '/')."/{$record->id}/picture"
+                : null,
             'picture_stored' => filled($record->picture_path),
         ], $record->wasRecentlyCreated ? 201 : 200);
     }
 
-    public function picture(AttendanceRecord $attendanceRecord): Response
+    public function storePicture(Request $request, AttendanceRecord $attendanceRecord): JsonResponse
+    {
+        $this->authorizeBridge($request);
+
+        abort_unless($attendanceRecord->picture_expected, 409, 'Picture upload is not expected for this event.');
+        abort_unless($request->headers->get('Content-Type') === self::PICTURE_CONTENT_TYPE, 415, 'Picture content type must be image/jpeg.');
+
+        $input = $request->getContent(true);
+        abort_unless(is_resource($input), 500, 'Unable to read picture body.');
+
+        $temp = tmpfile();
+        if (! is_resource($temp)) {
+            fclose($input);
+            abort(500, 'Unable to create temporary picture file.');
+        }
+
+        $bytes = 0;
+        $head = '';
+        $hash = hash_init('sha256');
+
+        while (! feof($input)) {
+            $chunk = fread($input, 8192);
+            if ($chunk === false) {
+                fclose($input);
+                fclose($temp);
+                abort(400, 'Unable to read picture body.');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+
+            $bytes += strlen($chunk);
+            if ($bytes > self::MAX_PICTURE_BYTES) {
+                fclose($input);
+                fclose($temp);
+                abort(413, 'Picture data is too large.');
+            }
+
+            if (strlen($head) < 3) {
+                $head .= substr($chunk, 0, 3 - strlen($head));
+            }
+            hash_update($hash, $chunk);
+            fwrite($temp, $chunk);
+        }
+        fclose($input);
+
+        abort_if($bytes === 0, 422, 'Picture data is required.');
+        abort_unless(str_starts_with($head, "\xFF\xD8\xFF"), 422, 'Picture data is not a JPEG image.');
+
+        $pictureHash = hash_final($hash);
+        abort_if(filled($attendanceRecord->picture_sha256) && $attendanceRecord->picture_sha256 !== $pictureHash, 409, 'Picture content changed for existing event.');
+
+        rewind($temp);
+        $path = "attendance-record-pictures/{$attendanceRecord->id}.jpg";
+        if (! Storage::disk('local')->writeStream($path, $temp)) {
+            fclose($temp);
+            abort(500, 'Unable to store picture.');
+        }
+        fclose($temp);
+
+        $attendanceRecord->forceFill([
+            'picture_path' => $path,
+            'picture_content_type' => self::PICTURE_CONTENT_TYPE,
+            'picture_bytes' => $bytes,
+            'picture_sha256' => $pictureHash,
+        ])->save();
+
+        return response()->json([
+            'ok' => true,
+            'id' => $attendanceRecord->id,
+            'picture_stored' => true,
+            'picture_bytes' => $bytes,
+            'picture_sha256' => $pictureHash,
+        ]);
+    }
+
+    public function picture(AttendanceRecord $attendanceRecord): StreamedResponse
     {
         abort_unless(filled($attendanceRecord->picture_path), 404);
         abort_unless(Storage::disk('local')->exists($attendanceRecord->picture_path), 404);
 
-        return response(Storage::disk('local')->get($attendanceRecord->picture_path), 200, [
-            'Content-Type' => $attendanceRecord->picture_content_type ?: 'image/jpeg',
+        return response()->stream(function () use ($attendanceRecord): void {
+            $stream = Storage::disk('local')->readStream($attendanceRecord->picture_path);
+            if (! is_resource($stream)) {
+                return;
+            }
+
+            while (! feof($stream)) {
+                $chunk = fread($stream, 8192);
+                if ($chunk === false) {
+                    break;
+                }
+                echo $chunk;
+            }
+
+            fclose($stream);
+        }, 200, [
+            'Content-Type' => $attendanceRecord->picture_content_type ?: self::PICTURE_CONTENT_TYPE,
+            'Content-Length' => (string) ($attendanceRecord->picture_bytes ?? Storage::disk('local')->size($attendanceRecord->picture_path)),
             'Cache-Control' => 'private, max-age=3600',
         ]);
     }
@@ -158,83 +257,4 @@ class AttendanceRecordController extends Controller
         return CarbonImmutable::parse($value);
     }
 
-    private function decodePicture(array $event): ?array
-    {
-        $picture = $event['picture'] ?? null;
-        if (! is_array($picture)) {
-            abort_if(filled($event['pictureURL'] ?? null), 422, 'Picture data is required when pictureURL is present.');
-
-            return null;
-        }
-
-        foreach (['contentType', 'encoding', 'bytes', 'data'] as $field) {
-            abort_unless(array_key_exists($field, $picture) && filled($picture[$field]), 422, "Picture {$field} is required.");
-        }
-
-        abort_unless($picture['encoding'] === 'base64', 422, 'Unsupported picture encoding.');
-
-        $binary = base64_decode((string) $picture['data'], true);
-        abort_if($binary === false, 422, 'Invalid picture data.');
-        abort_if(strlen($binary) > self::MAX_PICTURE_BYTES, 422, 'Picture data is too large.');
-        abort_unless((int) $picture['bytes'] === strlen($binary), 422, 'Picture byte count does not match data.');
-
-        $contentType = $this->pictureContentType((string) $picture['contentType'], $binary);
-
-        return [
-            'binary' => $binary,
-            'content_type' => $contentType,
-        ];
-    }
-
-    private function storePicture(AttendanceRecord $record, ?array $picture): void
-    {
-        if ($picture === null) {
-            return;
-        }
-
-        $binary = $picture['binary'];
-        $contentType = $picture['content_type'];
-        $extension = $contentType === 'image/png' ? 'png' : 'jpg';
-        $path = "attendance-record-pictures/{$record->id}.{$extension}";
-
-        if (filled($record->picture_path) && $record->picture_path !== $path) {
-            Storage::disk('local')->delete($record->picture_path);
-        }
-
-        Storage::disk('local')->put($path, $binary);
-        $record->forceFill([
-            'picture_path' => $path,
-            'picture_content_type' => $contentType,
-            'picture_bytes' => strlen($binary),
-        ])->save();
-    }
-
-    private function pictureContentType(string $contentType, string $binary): string
-    {
-        $contentType = strtolower(trim(explode(';', $contentType)[0] ?? ''));
-
-        abort_unless(in_array($contentType, ['image/jpeg', 'image/png'], true), 422, 'Unsupported picture content type.');
-        abort_unless($this->binaryMatchesContentType($contentType, $binary), 422, 'Picture content type does not match data.');
-
-        return $contentType;
-    }
-
-    private function binaryMatchesContentType(string $contentType, string $binary): bool
-    {
-        return match ($contentType) {
-            'image/jpeg' => str_starts_with($binary, "\xFF\xD8\xFF"),
-            'image/png' => str_starts_with($binary, "\x89PNG\r\n\x1A\n"),
-            default => false,
-        };
-    }
-
-    private function payloadForStorage(array $payload): array
-    {
-        if (isset($payload['event']['picture']['data'])) {
-            unset($payload['event']['picture']['data']);
-            $payload['event']['picture']['stored_separately'] = true;
-        }
-
-        return $payload;
-    }
 }

@@ -78,10 +78,10 @@ The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
 - Runs WiFi in `APSTA` mode, so setup AP and station connection can be active at the same time.
 - Stores configuration and the delivery cursor in NVS.
 - Polls the Hikvision terminal at `http://192.168.1.200` using Digest authentication with the configured username and password.
-- Uses `/ISAPI/AccessControl/AcsEvent?format=json` with a serial cursor and sends one event per Laravel POST.
-- Downloads each reported event picture from the Hikvision terminal and embeds it in the Laravel POST as base64 image data.
-- Advances `last_serial` only after Laravel returns a 2xx response.
-- Leaves `last_serial` unchanged when picture download, payload construction, or Laravel delivery fails, so the same event is retried.
+- Uses `/ISAPI/AccessControl/AcsEvent?format=json` with a serial cursor and sends one metadata POST per event.
+- When Laravel says a picture is required, streams the exact JPEG from the Hikvision `pictureURL` directly into the receiver's picture upload endpoint.
+- Advances `last_serial` only after Laravel accepts the metadata and any required picture upload.
+- Leaves `last_serial` unchanged when picture fetch, payload construction, or Laravel delivery fails, so the same event is retried.
 - Serves the setup UI at `http://192.168.4.1/` while connected to the setup AP.
 - Serves machine status at `/api/status`.
 

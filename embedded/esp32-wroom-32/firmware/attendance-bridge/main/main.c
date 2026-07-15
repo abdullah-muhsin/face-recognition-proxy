@@ -28,7 +28,6 @@
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "mbedtls/base64.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -71,7 +70,6 @@
 #define MAX_HIKVISION_RESULTS 10
 #define MAX_PAGES_PER_CYCLE 5
 #define HTTP_CAPTURE_DEVICE_BYTES (24 * 1024)
-#define MAX_EVENT_PICTURE_BYTES (72 * 1024)
 #define HTTP_CAPTURE_RECEIVER_BYTES 2048
 #define FORM_MAX_BYTES 4096
 #define HTML_MAX_BYTES 14000
@@ -139,12 +137,6 @@ typedef struct {
     cJSON *item;
     uint32_t serial;
 } event_ref_t;
-
-typedef struct {
-    uint8_t *data;
-    size_t len;
-    char content_type[80];
-} event_picture_t;
 
 typedef struct {
     char *data;
@@ -342,26 +334,10 @@ static void json_append_u32_field(json_buffer_t *buffer, const char *name, uint3
     json_appendf(buffer, ":%" PRIu32, value);
 }
 
-static bool json_append_base64(json_buffer_t *buffer, const uint8_t *data, size_t len)
+static void json_append_bool_field(json_buffer_t *buffer, const char *name, bool value)
 {
-    if (buffer->overflow || data == NULL || len == 0) {
-        return false;
-    }
-
-    size_t written = 0;
-    int ret = mbedtls_base64_encode((unsigned char *)buffer->data + buffer->len,
-                                    buffer->capacity - buffer->len,
-                                    &written,
-                                    data,
-                                    len);
-    if (ret != 0 || written >= buffer->capacity - buffer->len) {
-        buffer->overflow = true;
-        return false;
-    }
-
-    buffer->len += written;
-    buffer->data[buffer->len] = '\0';
-    return true;
+    json_append_quoted(buffer, name);
+    json_appendf(buffer, ":%s", value ? "true" : "false");
 }
 
 static void html_escape(const char *input, char *output, size_t output_size)
@@ -947,162 +923,283 @@ static esp_err_t hikvision_request(const bridge_config_t *config,
                                 status_code);
 }
 
-static esp_err_t receiver_post(const bridge_config_t *config, const char *payload, int *status_code)
+static esp_err_t receiver_post_metadata(const bridge_config_t *config,
+                                        const char *payload,
+                                        char *response,
+                                        int response_capacity,
+                                        int *status_code,
+                                        int *response_len,
+                                        bool *response_overflowed)
 {
-    char response[HTTP_CAPTURE_RECEIVER_BYTES];
-    return perform_http_request(config->receiver_url,
-                                HTTP_METHOD_POST,
-                                NULL,
-                                NULL,
-                                HTTP_AUTH_TYPE_NONE,
-                                config->receiver_token,
-                                payload,
-                                response,
-                                sizeof(response),
-                                status_code);
+    return perform_http_request_capture(config->receiver_url,
+                                        HTTP_METHOD_POST,
+                                        NULL,
+                                        NULL,
+                                        HTTP_AUTH_TYPE_NONE,
+                                        config->receiver_token,
+                                        payload,
+                                        response,
+                                        response_capacity,
+                                        status_code,
+                                        response_len,
+                                        NULL,
+                                        0,
+                                        response_overflowed);
 }
 
-static bool build_picture_url(const bridge_config_t *config, const char *picture_url, char *url, size_t url_size)
+static esp_err_t http_client_write_all(esp_http_client_handle_t client, const char *buffer, int len)
 {
-    if (picture_url == NULL || picture_url[0] == '\0' || url_size == 0) {
-        return false;
-    }
-
-    int written = 0;
-    if (valid_http_url(picture_url, false)) {
-        written = snprintf(url, url_size, "%s", picture_url);
-    } else {
-        size_t base_len = strlen(config->device_base_url);
-        bool base_has_slash = base_len > 0 && config->device_base_url[base_len - 1] == '/';
-        bool path_has_slash = picture_url[0] == '/';
-
-        if (base_has_slash && path_has_slash) {
-            written = snprintf(url, url_size, "%.*s%s", (int)(base_len - 1), config->device_base_url, picture_url);
-        } else if (!base_has_slash && !path_has_slash) {
-            written = snprintf(url, url_size, "%s/%s", config->device_base_url, picture_url);
-        } else {
-            written = snprintf(url, url_size, "%s%s", config->device_base_url, picture_url);
+    int written_total = 0;
+    while (written_total < len) {
+        int written = esp_http_client_write(client, buffer + written_total, len - written_total);
+        if (written <= 0) {
+            return ESP_FAIL;
         }
+        written_total += written;
     }
-
-    return written > 0 && (size_t)written < url_size;
+    return ESP_OK;
 }
 
-static void normalize_content_type(char *content_type)
+static esp_err_t http_client_write_chunk(esp_http_client_handle_t client, const uint8_t *data, int len)
 {
-    if (content_type == NULL || content_type[0] == '\0') {
-        return;
+    char chunk_header[16];
+    int header_len = snprintf(chunk_header, sizeof(chunk_header), "%x\r\n", len);
+    if (header_len <= 0 || header_len >= (int)sizeof(chunk_header)) {
+        return ESP_FAIL;
     }
 
-    char *semicolon = strchr(content_type, ';');
-    if (semicolon != NULL) {
-        *semicolon = '\0';
+    if (http_client_write_all(client, chunk_header, header_len) != ESP_OK) {
+        return ESP_FAIL;
     }
-    for (char *p = content_type; *p != '\0'; ++p) {
-        *p = (char)tolower((unsigned char)*p);
+    if (len > 0 && http_client_write_all(client, (const char *)data, len) != ESP_OK) {
+        return ESP_FAIL;
     }
+    if (http_client_write_all(client, "\r\n", 2) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
 }
 
-static bool supported_picture_content_type(const char *content_type)
+static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
+                                            const char *picture_url,
+                                            const char *upload_url,
+                                            int *upload_status)
 {
-    return strcmp(content_type, "image/jpeg") == 0 || strcmp(content_type, "image/png") == 0;
-}
-
-static bool picture_bytes_match_content_type(const char *content_type, const uint8_t *data, size_t len)
-{
-    if (strcmp(content_type, "image/jpeg") == 0) {
-        return len >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
-    }
-    if (strcmp(content_type, "image/png") == 0) {
-        static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
-        return len >= sizeof(png_signature) && memcmp(data, png_signature, sizeof(png_signature)) == 0;
+    if (upload_status != NULL) {
+        *upload_status = 0;
     }
 
-    return false;
-}
-
-static void event_picture_free(event_picture_t *picture)
-{
-    if (picture == NULL) {
-        return;
+    if (!valid_http_url(picture_url, false) || !valid_http_url(upload_url, false)) {
+        return ESP_ERR_INVALID_ARG;
     }
 
-    free(picture->data);
-    memset(picture, 0, sizeof(*picture));
-}
+    char response[HTTP_CAPTURE_RECEIVER_BYTES];
+    response[0] = '\0';
 
-static bool download_event_picture(const bridge_config_t *config, cJSON *event, event_picture_t *picture)
-{
-    memset(picture, 0, sizeof(*picture));
+    esp_http_client_config_t picture_config = {
+        .url = picture_url,
+        .username = config->device_username,
+        .password = config->device_password,
+        .auth_type = HTTP_AUTH_TYPE_DIGEST,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = 9000,
+        .user_agent = "esp32-attendance-bridge/" FIRMWARE_VERSION,
+        .disable_auto_redirect = true,
+        .buffer_size = 2048,
+        .buffer_size_tx = 2048,
+    };
 
-    const char *picture_url = json_string(event, "pictureURL");
-    if (picture_url[0] == '\0') {
-        return true;
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+    if (starts_with(picture_url, "https://")) {
+        picture_config.crt_bundle_attach = esp_crt_bundle_attach;
+    }
+#endif
+
+    esp_http_client_config_t upload_config = {
+        .url = upload_url,
+        .method = HTTP_METHOD_PUT,
+        .timeout_ms = 9000,
+        .user_agent = "esp32-attendance-bridge/" FIRMWARE_VERSION,
+        .disable_auto_redirect = true,
+        .buffer_size = 2048,
+        .buffer_size_tx = 2048,
+    };
+
+#if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+    if (starts_with(upload_url, "https://")) {
+        upload_config.crt_bundle_attach = esp_crt_bundle_attach;
+    }
+#endif
+
+    esp_http_client_handle_t picture_client = esp_http_client_init(&picture_config);
+    if (picture_client == NULL) {
+        return ESP_ERR_NO_MEM;
     }
 
-    char url[768];
-    if (!build_picture_url(config, picture_url, url, sizeof(url))) {
-        status_set_error("Picture URL is too long for serial %" PRIu32, json_u32(event, "serialNo"));
-        return false;
+    esp_http_client_handle_t upload_client = esp_http_client_init(&upload_config);
+    if (upload_client == NULL) {
+        esp_http_client_cleanup(picture_client);
+        return ESP_ERR_NO_MEM;
     }
 
-    uint8_t *data = malloc(MAX_EVENT_PICTURE_BYTES + 1);
-    if (data == NULL) {
-        status_set_error("No memory for picture buffer on serial %" PRIu32, json_u32(event, "serialNo"));
-        return false;
+    esp_http_client_set_header(upload_client, "Content-Type", "image/jpeg");
+    esp_http_client_set_header(upload_client, "Accept", "application/json");
+    if (config->receiver_token[0] != '\0') {
+        char auth_header[128];
+        snprintf(auth_header, sizeof(auth_header), "Bearer %s", config->receiver_token);
+        esp_http_client_set_header(upload_client, "Authorization", auth_header);
+        esp_http_client_set_header(upload_client, "X-Bridge-Token", config->receiver_token);
     }
 
-    int status = 0;
-    int response_len = 0;
-    bool response_overflowed = false;
-    char content_type[sizeof(picture->content_type)] = "";
-    esp_err_t err = perform_http_request_capture(url,
-                                                 HTTP_METHOD_GET,
-                                                 config->device_username,
-                                                 config->device_password,
-                                                 HTTP_AUTH_TYPE_DIGEST,
-                                                 NULL,
-                                                 NULL,
-                                                 (char *)data,
-                                                 MAX_EVENT_PICTURE_BYTES + 1,
-                                                 &status,
-                                                 &response_len,
-                                                 content_type,
-                                                 sizeof(content_type),
-                                                 &response_overflowed);
-    uint32_t serial = json_u32(event, "serialNo");
-    if (err != ESP_OK || status != 200) {
-        status_set_error("Picture download failed for serial %" PRIu32 ": err=%s status=%d",
-                         serial,
-                         esp_err_to_name(err),
-                         status);
-        free(data);
-        return false;
-    }
-    if (response_overflowed || response_len <= 0 || response_len > MAX_EVENT_PICTURE_BYTES) {
-        status_set_error("Picture size is invalid for serial %" PRIu32 ": bytes=%d", serial, response_len);
-        free(data);
-        return false;
+    esp_err_t err = esp_http_client_open(picture_client, 0);
+    if (err != ESP_OK) {
+        status_set_error("Picture download open failed: err=%s", esp_err_to_name(err));
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_cleanup(upload_client);
+        return err;
     }
 
-    normalize_content_type(content_type);
-    if (!supported_picture_content_type(content_type)) {
-        status_set_error("Unsupported picture content type for serial %" PRIu32 ": %s",
-                         serial,
-                         content_type[0] != '\0' ? content_type : "-");
-        free(data);
-        return false;
-    }
-    if (!picture_bytes_match_content_type(content_type, data, (size_t)response_len)) {
-        status_set_error("Picture content type does not match data for serial %" PRIu32, serial);
-        free(data);
-        return false;
+    int64_t picture_content_length = esp_http_client_fetch_headers(picture_client);
+    int picture_status = esp_http_client_get_status_code(picture_client);
+    if (picture_content_length < 0 || picture_status != 200) {
+        status_set_error("Picture download failed: status=%d", picture_status);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
     }
 
-    picture->data = data;
-    picture->len = (size_t)response_len;
-    copy_string(picture->content_type, sizeof(picture->content_type), content_type);
-    return true;
+    uint8_t first_chunk[1024];
+    int first_len = 0;
+    while (first_len < 3) {
+        int read_len = esp_http_client_read(picture_client, (char *)first_chunk + first_len, (int)sizeof(first_chunk) - first_len);
+        if (read_len < 0) {
+            status_set_error("Picture read failed: rc=%d", read_len);
+            esp_http_client_close(picture_client);
+            esp_http_client_cleanup(picture_client);
+            esp_http_client_cleanup(upload_client);
+            return ESP_FAIL;
+        }
+        if (read_len == 0) {
+            status_set_error("Picture stream was too short");
+            esp_http_client_close(picture_client);
+            esp_http_client_cleanup(picture_client);
+            esp_http_client_cleanup(upload_client);
+            return ESP_FAIL;
+        }
+
+        first_len += read_len;
+    }
+
+    if (first_chunk[0] != 0xFF || first_chunk[1] != 0xD8 || first_chunk[2] != 0xFF) {
+        status_set_error("Picture data is not a JPEG image");
+        esp_http_client_close(picture_client);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
+    }
+
+    err = esp_http_client_open(upload_client, -1);
+    if (err != ESP_OK) {
+        status_set_error("Picture upload open failed: err=%s", esp_err_to_name(err));
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_cleanup(upload_client);
+        return err;
+    }
+
+    uint8_t buffer[1024];
+    int total_written = 0;
+    if (http_client_write_chunk(upload_client, first_chunk, first_len) != ESP_OK) {
+        status_set_error("Picture upload write failed: chunk=%d", first_len);
+        esp_http_client_close(picture_client);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_close(upload_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
+    }
+    total_written += first_len;
+
+    while (true) {
+        int read_len = esp_http_client_read(picture_client, (char *)buffer, sizeof(buffer));
+        if (read_len < 0) {
+            status_set_error("Picture read failed: rc=%d", read_len);
+            esp_http_client_close(picture_client);
+            esp_http_client_cleanup(picture_client);
+            esp_http_client_close(upload_client);
+            esp_http_client_cleanup(upload_client);
+            return ESP_FAIL;
+        }
+        if (read_len == 0) {
+            break;
+        }
+
+        if (http_client_write_chunk(upload_client, buffer, read_len) != ESP_OK) {
+            status_set_error("Picture upload write failed: chunk=%d", read_len);
+            esp_http_client_close(picture_client);
+            esp_http_client_cleanup(picture_client);
+            esp_http_client_close(upload_client);
+            esp_http_client_cleanup(upload_client);
+            return ESP_FAIL;
+        }
+        total_written += read_len;
+    }
+
+    if (total_written == 0) {
+        status_set_error("Picture stream was empty");
+        esp_http_client_close(picture_client);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_close(upload_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
+    }
+
+    if (http_client_write_all(upload_client, "0\r\n\r\n", 5) != ESP_OK) {
+        status_set_error("Picture upload final chunk failed");
+        esp_http_client_close(picture_client);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_close(upload_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
+    }
+
+    int64_t upload_content_length = esp_http_client_fetch_headers(upload_client);
+    int response_status = esp_http_client_get_status_code(upload_client);
+    if (upload_content_length < 0) {
+        status_set_error("Picture upload response was invalid: status=%d", response_status);
+        esp_http_client_close(picture_client);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_close(upload_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
+    }
+
+    if (upload_status != NULL) {
+        *upload_status = response_status;
+    }
+
+    int response_len = esp_http_client_read_response(upload_client, response, sizeof(response) - 1);
+    if (response_len < 0) {
+        response[0] = '\0';
+        response_len = 0;
+    } else {
+        response[response_len] = '\0';
+    }
+
+    if (response_status < 200 || response_status >= 300) {
+        status_set_error("Picture upload failed: status=%d body=%s", response_status, response_len > 0 ? response : "-");
+        esp_http_client_close(picture_client);
+        esp_http_client_cleanup(picture_client);
+        esp_http_client_close(upload_client);
+        esp_http_client_cleanup(upload_client);
+        return ESP_FAIL;
+    }
+
+    esp_http_client_close(picture_client);
+    esp_http_client_cleanup(picture_client);
+    esp_http_client_close(upload_client);
+    esp_http_client_cleanup(upload_client);
+    ESP_LOGI(TAG, "Uploaded picture bytes=%d status=%d", total_written, response_status);
+    return ESP_OK;
 }
 
 static bool extract_xml_tag(const char *xml, const char *tag, char *output, size_t output_size)
@@ -1190,18 +1287,25 @@ static uint32_t json_u32(cJSON *object, const char *key)
     return 0;
 }
 
-static char *build_receiver_payload(const bridge_config_t *config, cJSON *event, const event_picture_t *picture)
+static char *build_receiver_metadata_payload(const bridge_config_t *config, cJSON *event)
 {
     device_identity_t identity;
     identity_snapshot(&identity);
 
-    char *raw = cJSON_PrintUnformatted(event);
+    cJSON *raw_event = cJSON_Duplicate(event, true);
+    if (raw_event == NULL) {
+        return NULL;
+    }
+    cJSON_DeleteItemFromObjectCaseSensitive(raw_event, "pictureURL");
+    cJSON_DeleteItemFromObjectCaseSensitive(raw_event, "picture");
+
+    char *raw = cJSON_PrintUnformatted(raw_event);
+    cJSON_Delete(raw_event);
     if (raw == NULL) {
         return NULL;
     }
 
-    bool has_picture = picture != NULL && picture->data != NULL && picture->len > 0;
-    size_t picture_base64_len = has_picture ? ((picture->len + 2) / 3) * 4 : 0;
+    bool picture_available = json_string(event, "pictureURL")[0] != '\0';
     size_t string_budget = strlen(config->bridge_id) +
                            strlen(config->device_base_url) +
                            strlen(config->device_username) +
@@ -1213,9 +1317,8 @@ static char *build_receiver_payload(const bridge_config_t *config, cJSON *event,
                            strlen(json_string(event, "employeeNoString")) +
                            strlen(json_string(event, "name")) +
                            strlen(json_string(event, "currentVerifyMode")) +
-                           strlen(json_string(event, "attendanceStatus")) +
-                           strlen(json_string(event, "pictureURL"));
-    size_t capacity = 8192 + strlen(raw) + picture_base64_len + (string_budget * 2);
+                           strlen(json_string(event, "attendanceStatus"));
+    size_t capacity = 4096 + strlen(raw) + (string_budget * 2);
     char *payload = calloc(1, capacity);
     if (payload == NULL) {
         cJSON_free(raw);
@@ -1266,21 +1369,8 @@ static char *build_receiver_payload(const bridge_config_t *config, cJSON *event,
     json_append_char(&out, ',');
     json_append_u32_field(&out, "statusValue", json_u32(event, "statusValue"));
     json_append_char(&out, ',');
-    json_append_string_field(&out, "pictureURL", json_string(event, "pictureURL"));
+    json_append_bool_field(&out, "picture_available", picture_available);
     json_appendf(&out, ",\"raw\":%s", raw);
-
-    if (has_picture) {
-        json_appendf(&out, ",\"picture\":{");
-        json_append_string_field(&out, "contentType", picture->content_type);
-        json_append_char(&out, ',');
-        json_append_string_field(&out, "encoding", "base64");
-        json_append_char(&out, ',');
-        json_append_u32_field(&out, "bytes", (uint32_t)picture->len);
-        json_appendf(&out, ",\"data\":\"");
-        json_append_base64(&out, picture->data, picture->len);
-        json_append_char(&out, '"');
-        json_append_char(&out, '}');
-    }
 
     json_appendf(&out, "}}");
 
@@ -1421,43 +1511,104 @@ static int poll_hikvision_once(const bridge_config_t *config)
 
     int delivered = 0;
     for (int i = 0; i < ref_count; ++i) {
-        event_picture_t picture;
-        if (!download_event_picture(config, refs[i].item, &picture)) {
-            xSemaphoreTake(s_state_lock, portMAX_DELAY);
-            s_status.failed_deliveries++;
-            xSemaphoreGive(s_state_lock);
-            break;
-        }
+        bool event_failed = false;
+        char *payload = NULL;
+        cJSON *receiver_root = NULL;
 
-        char *payload = build_receiver_payload(config, refs[i].item, &picture);
-        event_picture_free(&picture);
+        payload = build_receiver_metadata_payload(config, refs[i].item);
         if (payload == NULL) {
             status_set_error("No memory for receiver payload");
-            break;
+            event_failed = true;
+            goto event_done;
         }
 
+        char response[HTTP_CAPTURE_RECEIVER_BYTES];
         int receiver_status = 0;
-        err = receiver_post(config, payload, &receiver_status);
+        int response_len = 0;
+        bool response_overflowed = false;
+        err = receiver_post_metadata(config,
+                                     payload,
+                                     response,
+                                     sizeof(response),
+                                     &receiver_status,
+                                     &response_len,
+                                     &response_overflowed);
         cJSON_free(payload);
+        payload = NULL;
 
-        if (err != ESP_OK || receiver_status < 200 || receiver_status >= 300) {
+        if (err != ESP_OK || receiver_status < 200 || receiver_status >= 300 || response_overflowed || response_len <= 0) {
             status_set_error("Receiver POST failed for serial %" PRIu32 ": err=%s status=%d",
                              refs[i].serial,
                              esp_err_to_name(err),
                              receiver_status);
+            event_failed = true;
+            goto event_done;
+        }
+
+        const char *parse_end = NULL;
+        receiver_root = cJSON_ParseWithOpts(response, &parse_end, false);
+        if (receiver_root == NULL) {
+            status_set_error("Receiver response was not valid JSON for serial %" PRIu32, refs[i].serial);
+            ESP_LOGW(TAG, "Receiver response parse failed near: %s", parse_end != NULL ? parse_end : "(null)");
+            event_failed = true;
+            goto event_done;
+        }
+
+        cJSON *picture_upload_required_item = cJSON_GetObjectItemCaseSensitive(receiver_root, "picture_upload_required");
+        cJSON *picture_upload_url_item = cJSON_GetObjectItemCaseSensitive(receiver_root, "picture_upload_url");
+        if (!cJSON_IsBool(picture_upload_required_item) ||
+            (!cJSON_IsString(picture_upload_url_item) && !cJSON_IsNull(picture_upload_url_item))) {
+            status_set_error("Receiver response had an unexpected schema for serial %" PRIu32, refs[i].serial);
+            event_failed = true;
+            goto event_done;
+        }
+
+        bool picture_upload_required = cJSON_IsTrue(picture_upload_required_item);
+        const char *picture_upload_url = cJSON_IsString(picture_upload_url_item) && picture_upload_url_item->valuestring != NULL
+                                             ? picture_upload_url_item->valuestring
+                                             : "";
+        const char *picture_url = json_string(refs[i].item, "pictureURL");
+
+        if (picture_upload_required) {
+            if (picture_url[0] == '\0' || picture_upload_url[0] == '\0') {
+                status_set_error("Picture upload details were missing for serial %" PRIu32, refs[i].serial);
+                event_failed = true;
+                goto event_done;
+            }
+
+            int picture_status = 0;
+            err = stream_picture_to_receiver(config, picture_url, picture_upload_url, &picture_status);
+            if (err != ESP_OK || picture_status < 200 || picture_status >= 300) {
+                status_set_error("Picture upload failed for serial %" PRIu32 ": err=%s status=%d",
+                                 refs[i].serial,
+                                 esp_err_to_name(err),
+                                 picture_status);
+                event_failed = true;
+                goto event_done;
+            }
+        }
+
+        if (persist_last_serial(refs[i].serial) != ESP_OK) {
+            status_set_error("Failed to persist serial %" PRIu32, refs[i].serial);
+            event_failed = true;
+            goto event_done;
+        }
+
+        delivered++;
+        status_clear_error();
+        ESP_LOGI(TAG, "Delivered event serial=%" PRIu32, refs[i].serial);
+
+    event_done:
+        cJSON_Delete(receiver_root);
+        if (payload != NULL) {
+            cJSON_free(payload);
+        }
+        if (event_failed) {
             xSemaphoreTake(s_state_lock, portMAX_DELAY);
             s_status.failed_deliveries++;
             xSemaphoreGive(s_state_lock);
             break;
         }
-
-        if (persist_last_serial(refs[i].serial) != ESP_OK) {
-            status_set_error("Failed to persist serial %" PRIu32, refs[i].serial);
-            break;
-        }
-        delivered++;
-        status_clear_error();
-        ESP_LOGI(TAG, "Delivered event serial=%" PRIu32, refs[i].serial);
     }
 
     cJSON_Delete(root);

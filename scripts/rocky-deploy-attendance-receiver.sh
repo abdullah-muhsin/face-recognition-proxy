@@ -186,6 +186,7 @@ location = /attendance-receiver/index.php {
 }
 
 location ^~ /attendance-receiver/ {
+    client_max_body_size 2m;
     rewrite ^/attendance-receiver/(.*)$ /\$1 break;
     root $deploy_root/public;
     try_files \$uri /attendance-receiver/index.php?\$query_string;
