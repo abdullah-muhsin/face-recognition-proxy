@@ -12,6 +12,9 @@ use Illuminate\View\View;
 
 class AttendanceRecordController extends Controller
 {
+    private const MAX_PICTURE_BYTES = 73728;
+    private const MAX_PICTURE_BASE64_CHARACTERS = 98304;
+
     public function index(Request $request): View
     {
         $search = trim((string) $request->query('search', ''));
@@ -71,8 +74,8 @@ class AttendanceRecordController extends Controller
             'event.picture' => ['nullable', 'array'],
             'event.picture.contentType' => ['nullable', 'string', 'max:120'],
             'event.picture.encoding' => ['nullable', 'string', 'in:base64'],
-            'event.picture.bytes' => ['nullable', 'integer', 'min:1', 'max:65536'],
-            'event.picture.data' => ['nullable', 'string', 'max:100000'],
+            'event.picture.bytes' => ['nullable', 'integer', 'min:1', 'max:'.self::MAX_PICTURE_BYTES],
+            'event.picture.data' => ['nullable', 'string', 'max:'.self::MAX_PICTURE_BASE64_CHARACTERS],
             'event.raw' => ['required', 'array'],
         ]);
 
@@ -172,7 +175,7 @@ class AttendanceRecordController extends Controller
 
         $binary = base64_decode((string) $picture['data'], true);
         abort_if($binary === false, 422, 'Invalid picture data.');
-        abort_if(strlen($binary) > 65536, 422, 'Picture data is too large.');
+        abort_if(strlen($binary) > self::MAX_PICTURE_BYTES, 422, 'Picture data is too large.');
         abort_unless((int) $picture['bytes'] === strlen($binary), 422, 'Picture byte count does not match data.');
 
         $contentType = $this->pictureContentType((string) $picture['contentType'], $binary);

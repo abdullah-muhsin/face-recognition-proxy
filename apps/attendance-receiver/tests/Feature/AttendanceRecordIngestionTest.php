@@ -57,6 +57,27 @@ class AttendanceRecordIngestionTest extends TestCase
             ->assertCreated();
     }
 
+    public function test_it_accepts_device_pictures_larger_than_64_kib(): void
+    {
+        Storage::fake('local');
+
+        $picture = "\xFF\xD8\xFF".str_repeat("\x00", 66805 - 3);
+        $payload = $this->payload();
+        $payload['event']['serialNo'] = 118;
+        $payload['event']['picture']['bytes'] = strlen($picture);
+        $payload['event']['picture']['data'] = base64_encode($picture);
+        $payload['event']['raw']['serialNo'] = 118;
+
+        $this->postJson('/api/attendance-records', $payload)
+            ->assertCreated()
+            ->assertJsonPath('event_serial_no', 118)
+            ->assertJsonPath('picture_stored', true);
+
+        $record = AttendanceRecord::firstOrFail();
+        $this->assertSame(66805, $record->picture_bytes);
+        Storage::disk('local')->assertExists($record->picture_path);
+    }
+
     public function test_it_rejects_incomplete_picture_payloads_without_creating_a_record(): void
     {
         Storage::fake('local');

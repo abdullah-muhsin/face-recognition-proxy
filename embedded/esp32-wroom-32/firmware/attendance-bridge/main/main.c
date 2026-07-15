@@ -59,7 +59,7 @@
 #endif
 
 #ifndef DEFAULT_RECEIVER_URL
-#define DEFAULT_RECEIVER_URL "http://192.168.1.2/attendance-receiver/api/attendance-records"
+#define DEFAULT_RECEIVER_URL "http://192.168.1.12/attendance-receiver/api/attendance-records"
 #endif
 
 #ifndef DEFAULT_RECEIVER_TOKEN
@@ -71,7 +71,7 @@
 #define MAX_HIKVISION_RESULTS 10
 #define MAX_PAGES_PER_CYCLE 5
 #define HTTP_CAPTURE_DEVICE_BYTES (24 * 1024)
-#define HTTP_CAPTURE_PICTURE_BYTES (64 * 1024)
+#define MAX_EVENT_PICTURE_BYTES (72 * 1024)
 #define HTTP_CAPTURE_RECEIVER_BYTES 2048
 #define FORM_MAX_BYTES 4096
 #define HTML_MAX_BYTES 14000
@@ -1046,7 +1046,7 @@ static bool download_event_picture(const bridge_config_t *config, cJSON *event, 
         return false;
     }
 
-    uint8_t *data = malloc(HTTP_CAPTURE_PICTURE_BYTES + 1);
+    uint8_t *data = malloc(MAX_EVENT_PICTURE_BYTES + 1);
     if (data == NULL) {
         status_set_error("No memory for picture buffer on serial %" PRIu32, json_u32(event, "serialNo"));
         return false;
@@ -1064,7 +1064,7 @@ static bool download_event_picture(const bridge_config_t *config, cJSON *event, 
                                                  NULL,
                                                  NULL,
                                                  (char *)data,
-                                                 HTTP_CAPTURE_PICTURE_BYTES + 1,
+                                                 MAX_EVENT_PICTURE_BYTES + 1,
                                                  &status,
                                                  &response_len,
                                                  content_type,
@@ -1079,7 +1079,7 @@ static bool download_event_picture(const bridge_config_t *config, cJSON *event, 
         free(data);
         return false;
     }
-    if (response_overflowed || response_len <= 0 || response_len > HTTP_CAPTURE_PICTURE_BYTES) {
+    if (response_overflowed || response_len <= 0 || response_len > MAX_EVENT_PICTURE_BYTES) {
         status_set_error("Picture size is invalid for serial %" PRIu32 ": bytes=%d", serial, response_len);
         free(data);
         return false;

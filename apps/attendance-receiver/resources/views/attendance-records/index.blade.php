@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="20">
     <title>Attendance Records</title>
-    @fonts
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body>
