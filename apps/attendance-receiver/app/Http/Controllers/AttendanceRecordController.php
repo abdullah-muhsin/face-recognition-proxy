@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AttendanceRecord;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -13,6 +14,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class AttendanceRecordController extends Controller
 {
     private const MAX_PICTURE_BYTES = 2097152;
+
     private const PICTURE_CONTENT_TYPE = 'image/jpeg';
 
     public function index(Request $request): View
@@ -42,6 +44,19 @@ class AttendanceRecordController extends Controller
             'uniqueEmployees' => AttendanceRecord::query()->whereNotNull('employee_no')->distinct('employee_no')->count('employee_no'),
             'uniqueDevices' => AttendanceRecord::query()->distinct('device_key')->count('device_key'),
         ]);
+    }
+
+    public function wipe(): RedirectResponse
+    {
+        $recordCount = AttendanceRecord::count();
+
+        AttendanceRecord::truncate();
+        Storage::disk('local')->deleteDirectory('attendance-record-pictures');
+        Storage::disk('local')->makeDirectory('attendance-record-pictures');
+
+        return redirect()
+            ->route('attendance-records.index')
+            ->with('status', $recordCount === 1 ? 'Wiped 1 record.' : "Wiped {$recordCount} records.");
     }
 
     public function store(Request $request): JsonResponse
@@ -256,5 +271,4 @@ class AttendanceRecordController extends Controller
 
         return CarbonImmutable::parse($value);
     }
-
 }
