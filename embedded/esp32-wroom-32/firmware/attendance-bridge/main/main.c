@@ -981,16 +981,79 @@ static esp_err_t http_client_write_chunk(esp_http_client_handle_t client, const 
     return ESP_OK;
 }
 
+static void picture_transfer_set_error(char *buffer, size_t buffer_size, const char *fmt, ...)
+{
+    if (buffer == NULL || buffer_size == 0) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, buffer_size, fmt, args);
+    va_end(args);
+}
+
+static esp_err_t open_hikvision_picture_stream(esp_http_client_handle_t client,
+                                               int64_t *content_length,
+                                               int *status_code)
+{
+    if (content_length != NULL) {
+        *content_length = -1;
+    }
+    if (status_code != NULL) {
+        *status_code = 0;
+    }
+
+    while (true) {
+        esp_err_t err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            return err;
+        }
+
+        int64_t fetched_content_length = esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+        if (status_code != NULL) {
+            *status_code = status;
+        }
+
+        if (fetched_content_length < 0) {
+            esp_http_client_close(client);
+            return ESP_FAIL;
+        }
+
+        if (status != HttpStatus_Unauthorized) {
+            if (content_length != NULL) {
+                *content_length = fetched_content_length;
+            }
+            return ESP_OK;
+        }
+
+        ESP_LOGI(TAG, "Picture download requested HTTP authentication; retrying with negotiated credentials");
+        err = esp_http_client_add_auth(client);
+        esp_http_client_close(client);
+        esp_http_client_clear_response_buffer(client);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+}
+
 static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
                                             const char *picture_url,
                                             const char *upload_url,
-                                            int *upload_status)
+                                            int *upload_status,
+                                            char *error_detail,
+                                            size_t error_detail_size)
 {
     if (upload_status != NULL) {
         *upload_status = 0;
     }
+    if (error_detail != NULL && error_detail_size > 0) {
+        error_detail[0] = '\0';
+    }
 
     if (!valid_http_url(picture_url, false) || !valid_http_url(upload_url, false)) {
+        picture_transfer_set_error(error_detail, error_detail_size, "invalid picture or upload URL");
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -1034,11 +1097,13 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
 
     esp_http_client_handle_t picture_client = esp_http_client_init(&picture_config);
     if (picture_client == NULL) {
+        picture_transfer_set_error(error_detail, error_detail_size, "no memory for picture client");
         return ESP_ERR_NO_MEM;
     }
 
     esp_http_client_handle_t upload_client = esp_http_client_init(&upload_config);
     if (upload_client == NULL) {
+        picture_transfer_set_error(error_detail, error_detail_size, "no memory for upload client");
         esp_http_client_cleanup(picture_client);
         return ESP_ERR_NO_MEM;
     }
@@ -1052,21 +1117,19 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
         esp_http_client_set_header(upload_client, "X-Bridge-Token", config->receiver_token);
     }
 
-    esp_err_t err = esp_http_client_open(picture_client, 0);
-    if (err != ESP_OK) {
-        status_set_error("Picture download open failed: err=%s", esp_err_to_name(err));
+    int64_t picture_content_length = -1;
+    int picture_status = 0;
+    esp_err_t err = open_hikvision_picture_stream(picture_client, &picture_content_length, &picture_status);
+    if (err != ESP_OK || picture_content_length < 0 || picture_status != HttpStatus_Ok) {
+        picture_transfer_set_error(error_detail,
+                                   error_detail_size,
+                                   "download failed: err=%s status=%d",
+                                   esp_err_to_name(err),
+                                   picture_status);
+        esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_cleanup(upload_client);
-        return err;
-    }
-
-    int64_t picture_content_length = esp_http_client_fetch_headers(picture_client);
-    int picture_status = esp_http_client_get_status_code(picture_client);
-    if (picture_content_length < 0 || picture_status != 200) {
-        status_set_error("Picture download failed: status=%d", picture_status);
-        esp_http_client_cleanup(picture_client);
-        esp_http_client_cleanup(upload_client);
-        return ESP_FAIL;
+        return err != ESP_OK ? err : ESP_FAIL;
     }
 
     uint8_t first_chunk[1024];
@@ -1074,14 +1137,14 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     while (first_len < 3) {
         int read_len = esp_http_client_read(picture_client, (char *)first_chunk + first_len, (int)sizeof(first_chunk) - first_len);
         if (read_len < 0) {
-            status_set_error("Picture read failed: rc=%d", read_len);
+            picture_transfer_set_error(error_detail, error_detail_size, "download read failed: rc=%d", read_len);
             esp_http_client_close(picture_client);
             esp_http_client_cleanup(picture_client);
             esp_http_client_cleanup(upload_client);
             return ESP_FAIL;
         }
         if (read_len == 0) {
-            status_set_error("Picture stream was too short");
+            picture_transfer_set_error(error_detail, error_detail_size, "download stream was too short");
             esp_http_client_close(picture_client);
             esp_http_client_cleanup(picture_client);
             esp_http_client_cleanup(upload_client);
@@ -1092,7 +1155,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     }
 
     if (first_chunk[0] != 0xFF || first_chunk[1] != 0xD8 || first_chunk[2] != 0xFF) {
-        status_set_error("Picture data is not a JPEG image");
+        picture_transfer_set_error(error_detail, error_detail_size, "download data is not a JPEG image");
         esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_cleanup(upload_client);
@@ -1101,7 +1164,8 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
 
     err = esp_http_client_open(upload_client, -1);
     if (err != ESP_OK) {
-        status_set_error("Picture upload open failed: err=%s", esp_err_to_name(err));
+        picture_transfer_set_error(error_detail, error_detail_size, "upload open failed: err=%s", esp_err_to_name(err));
+        esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_cleanup(upload_client);
         return err;
@@ -1110,7 +1174,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     uint8_t buffer[1024];
     int total_written = 0;
     if (http_client_write_chunk(upload_client, first_chunk, first_len) != ESP_OK) {
-        status_set_error("Picture upload write failed: chunk=%d", first_len);
+        picture_transfer_set_error(error_detail, error_detail_size, "upload write failed: chunk=%d", first_len);
         esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_close(upload_client);
@@ -1122,7 +1186,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     while (true) {
         int read_len = esp_http_client_read(picture_client, (char *)buffer, sizeof(buffer));
         if (read_len < 0) {
-            status_set_error("Picture read failed: rc=%d", read_len);
+            picture_transfer_set_error(error_detail, error_detail_size, "download read failed: rc=%d", read_len);
             esp_http_client_close(picture_client);
             esp_http_client_cleanup(picture_client);
             esp_http_client_close(upload_client);
@@ -1134,7 +1198,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
         }
 
         if (http_client_write_chunk(upload_client, buffer, read_len) != ESP_OK) {
-            status_set_error("Picture upload write failed: chunk=%d", read_len);
+            picture_transfer_set_error(error_detail, error_detail_size, "upload write failed: chunk=%d", read_len);
             esp_http_client_close(picture_client);
             esp_http_client_cleanup(picture_client);
             esp_http_client_close(upload_client);
@@ -1145,7 +1209,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     }
 
     if (total_written == 0) {
-        status_set_error("Picture stream was empty");
+        picture_transfer_set_error(error_detail, error_detail_size, "download stream was empty");
         esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_close(upload_client);
@@ -1154,7 +1218,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     }
 
     if (http_client_write_all(upload_client, "0\r\n\r\n", 5) != ESP_OK) {
-        status_set_error("Picture upload final chunk failed");
+        picture_transfer_set_error(error_detail, error_detail_size, "upload final chunk failed");
         esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_close(upload_client);
@@ -1165,7 +1229,7 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     int64_t upload_content_length = esp_http_client_fetch_headers(upload_client);
     int response_status = esp_http_client_get_status_code(upload_client);
     if (upload_content_length < 0) {
-        status_set_error("Picture upload response was invalid: status=%d", response_status);
+        picture_transfer_set_error(error_detail, error_detail_size, "upload response was invalid: status=%d", response_status);
         esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_close(upload_client);
@@ -1186,7 +1250,11 @@ static esp_err_t stream_picture_to_receiver(const bridge_config_t *config,
     }
 
     if (response_status < 200 || response_status >= 300) {
-        status_set_error("Picture upload failed: status=%d body=%s", response_status, response_len > 0 ? response : "-");
+        picture_transfer_set_error(error_detail,
+                                   error_detail_size,
+                                   "upload failed: status=%d body=%s",
+                                   response_status,
+                                   response_len > 0 ? response : "-");
         esp_http_client_close(picture_client);
         esp_http_client_cleanup(picture_client);
         esp_http_client_close(upload_client);
@@ -1576,13 +1644,23 @@ static int poll_hikvision_once(const bridge_config_t *config)
                 goto event_done;
             }
 
-            int picture_status = 0;
-            err = stream_picture_to_receiver(config, picture_url, picture_upload_url, &picture_status);
-            if (err != ESP_OK || picture_status < 200 || picture_status >= 300) {
-                status_set_error("Picture upload failed for serial %" PRIu32 ": err=%s status=%d",
-                                 refs[i].serial,
-                                 esp_err_to_name(err),
-                                 picture_status);
+            int upload_status = 0;
+            char picture_error[128];
+            err = stream_picture_to_receiver(config,
+                                             picture_url,
+                                             picture_upload_url,
+                                             &upload_status,
+                                             picture_error,
+                                             sizeof(picture_error));
+            if (err != ESP_OK || upload_status < 200 || upload_status >= 300) {
+                if (picture_error[0] != '\0') {
+                    status_set_error("Picture transfer failed for serial %" PRIu32 ": %s", refs[i].serial, picture_error);
+                } else {
+                    status_set_error("Picture transfer failed for serial %" PRIu32 ": err=%s upload_status=%d",
+                                     refs[i].serial,
+                                     esp_err_to_name(err),
+                                     upload_status);
+                }
                 event_failed = true;
                 goto event_done;
             }
