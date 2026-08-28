@@ -11,6 +11,7 @@ app_src="$repo_root/apps/attendance-receiver"
 env_file="$app_src/.env"
 deploy_root="${ATTENDANCE_RECEIVER_DEPLOY_ROOT:-/var/www/attendance-receiver}"
 nginx_include="${ATTENDANCE_RECEIVER_NGINX_INCLUDE:-/etc/nginx/default.d/attendance-receiver.conf}"
+app_url="${ATTENDANCE_RECEIVER_APP_URL:-http://localhost/attendance-receiver}"
 php_user="${ATTENDANCE_RECEIVER_PHP_USER:-apache}"
 php_group="${ATTENDANCE_RECEIVER_PHP_GROUP:-apache}"
 db_name="${ATTENDANCE_RECEIVER_DB_NAME:-attendance_receiver}"
@@ -104,6 +105,11 @@ if ! env_value APP_KEY >/dev/null 2>&1 || [ -z "$(env_value APP_KEY)" ]; then
   (cd "$app_src" && php artisan key:generate --force)
 fi
 
+set_env_value APP_ENV production
+set_env_value APP_DEBUG false
+set_env_value APP_URL "$app_url"
+set_env_value ASSET_URL /attendance-receiver
+set_env_value SESSION_PATH /attendance-receiver
 set_env_value DB_CONNECTION mysql
 set_env_value DB_HOST 127.0.0.1
 set_env_value DB_PORT 3306

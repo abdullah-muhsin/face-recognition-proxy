@@ -47,15 +47,6 @@ APP_ENV=production
 APP_KEY=$app_key
 APP_DEBUG=false
 APP_URL=$public_url
-ASSET_URL=
-DB_CONNECTION=sqlite
-DB_DATABASE=/var/lib/attendance-receiver/database.sqlite
-SESSION_DRIVER=file
-SESSION_PATH=/
-CACHE_STORE=file
-QUEUE_CONNECTION=sync
-FILESYSTEM_DISK=local
-LOG_CHANNEL=stack
 ATTENDANCE_BRIDGE_TOKEN=${ATTENDANCE_BRIDGE_TOKEN:-}
 ENV
 chmod 600 "$env_file"

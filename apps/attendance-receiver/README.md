@@ -16,10 +16,7 @@ Laravel validates and persists the posted payload. It does not store Hikvision c
 ## Local Development
 
 ```bash
-composer install
-npm ci
-npm run build
-php artisan migrate
+composer run setup
 php artisan test
 ```
 
@@ -37,7 +34,11 @@ Use the repository-level Rocky helpers from the workspace root:
 ./scripts/rocky-deploy-attendance-receiver.sh
 ```
 
-The deploy helper builds the frontend assets, creates the MariaDB database/user from `.env`, syncs the app to `/var/www/attendance-receiver`, applies persistent SELinux labels, writes the nginx include under `/etc/nginx/default.d`, runs migrations as the PHP-FPM user, and reloads nginx.
+The deploy helper starts from `.env.example` when needed, builds the frontend
+assets, applies production-safe app settings, creates the MariaDB database/user,
+syncs the app to `/var/www/attendance-receiver`, applies persistent SELinux
+labels, writes the nginx include under `/etc/nginx/default.d`, runs migrations
+as the PHP-FPM user, and reloads nginx.
 
 The nginx-served endpoints are:
 

@@ -57,10 +57,7 @@ Or use the helper, which enables CRB/EPEL, installs the packages, enables servic
 
 ```bash
 cd apps/attendance-receiver
-composer install
-npm ci
-npm run build
-php artisan migrate
+composer run setup
 php artisan test
 ```
 
@@ -69,6 +66,11 @@ To deploy the local Rocky nginx/PHP-FPM runtime:
 ```bash
 ./scripts/rocky-deploy-attendance-receiver.sh
 ```
+
+The helper starts from the small local `.env.example`, then applies
+production-safe settings and configures MariaDB for the nginx subpath. Set
+`ATTENDANCE_RECEIVER_APP_URL` before running it when the app has a different
+canonical URL.
 
 Nginx serves the app at `http://localhost/attendance-receiver`.
 
