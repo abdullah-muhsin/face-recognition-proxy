@@ -4,7 +4,7 @@ This repository is organized as a multi-part workspace for the face recognition 
 
 ## Structure
 
-- `apps/attendance-receiver` - Laravel application for the hosted attendance receiver demo and optional local `/attendance-receiver` runtime.
+- `apps/attendance-receiver` - Docker-deployed Laravel application that receives and displays attendance events.
 - `embedded/esp32-wroom-32` - ESP32-WROOM-32 development firmware and helper scripts.
 - `docs/devices/hikvision-ds-k1a340fwx` - Hikvision DS-K1A340FWX terminal documentation and API notes.
 
@@ -20,40 +20,17 @@ ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
 ```
 
 The default ESP32 firmware is `firmware/attendance-bridge`. It starts an open
-setup AP by default, joins the configured attendance LAN as a station, polls the
-Hikvision terminal through ISAPI Digest auth, and posts accepted events to the
-Laravel receiver. By default, that bridge posts to the hosted demo receiver at
-`http://209.42.26.200:8001/api/attendance-records`; override the receiver URL in
-the firmware setup UI or `local_defaults.h` if you need a private endpoint.
+setup AP, then you configure its attendance LAN, Hikvision terminal, and
+receiver URL in the setup UI. It persists that configuration in NVS. A private
+`local_defaults.h` can supply build-time defaults; copy the tracked example and
+never commit the resulting file.
 
 ## Laravel Application
 
-The Laravel application is under `apps/attendance-receiver`. The hosted demo
-uses the container runtime at `http://209.42.26.200:8001`, with SQLite-backed
-runtime storage under `~/attendance-receiver-runtime` on the VPS. The bridge API
-endpoint is `http://209.42.26.200:8001/api/attendance-records`.
-
-The Rocky PHP-FPM helper remains available for local/dev deployments and uses a
-MariaDB/MySQL connection.
-
-Rocky Linux 10 packages needed for the Laravel/nginx and ESP32 build sides:
-
-```bash
-sudo dnf install -y dnf-plugins-core epel-release
-sudo dnf config-manager --set-enabled crb
-sudo dnf install -y \
-  php php-cli php-fpm php-common php-pdo php-mysqlnd php-xml php-mbstring \
-  php-bcmath php-intl php-process php-pecl-zip composer \
-  nginx mariadb-server nodejs \
-  git curl wget unzip tar rsync gcc make flex bison gperf cmake ninja-build ccache \
-  python3 python3-pip python3-devel libusb1 libxcrypt-compat policycoreutils-python-utils
-```
-
-Or use the helper, which enables CRB/EPEL, installs the packages, enables services, adds the sudoing user to `dialout`, and removes any old `cmake`/`ninja` bootstrap wheels from the ESP-IDF Python environment:
-
-```bash
-./scripts/rocky-install-system-deps.sh
-```
+The Laravel application is under `apps/attendance-receiver` and is deployed
+with Docker Compose. Its production data is SQLite plus uploaded pictures in
+named Docker volumes. No host PHP-FPM, nginx, MariaDB, or Rocky-specific deploy
+scripts are required.
 
 ```bash
 cd apps/attendance-receiver
@@ -61,38 +38,8 @@ composer run setup
 php artisan test
 ```
 
-To deploy the local Rocky nginx/PHP-FPM runtime:
+For deployment instructions and the receiver API, see
+[`apps/attendance-receiver/README.md`](apps/attendance-receiver/README.md).
 
-```bash
-./scripts/rocky-deploy-attendance-receiver.sh
-```
-
-The helper starts from the small local `.env.example`, then applies
-production-safe settings and configures MariaDB for the nginx subpath. Set
-`ATTENDANCE_RECEIVER_APP_URL` before running it when the app has a different
-canonical URL.
-
-Nginx serves the app at `http://localhost/attendance-receiver`.
-
-ESP32 records are accepted at `POST /attendance-receiver/api/attendance-records` when served by nginx, or `POST /api/attendance-records` when using `php artisan serve`.
-
-## Rocky Local Web Server
-
-Nginx is installed from Rocky AppStream and serves the Laravel app through PHP-FPM.
-
-- Canonical URL: `http://localhost/attendance-receiver`
-- Source path: `apps/attendance-receiver`
-- Runtime path: `/var/www/attendance-receiver`
-- Nginx include: `/etc/nginx/default.d/attendance-receiver.conf`
-- PHP-FPM user: `apache`
-- SELinux labels: `httpd_sys_content_t` for app files, `httpd_sys_rw_content_t` for `storage` and `bootstrap/cache`
-
-Useful commands:
-
-```bash
-sudo systemctl status nginx php-fpm
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-Local environment files and device credentials are ignored by git.
+Rocky Linux remains a valid ESP32 development host; its ESP-IDF prerequisites
+are documented with the firmware.

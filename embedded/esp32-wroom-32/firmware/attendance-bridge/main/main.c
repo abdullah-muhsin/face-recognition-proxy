@@ -46,19 +46,19 @@
 #endif
 
 #ifndef DEFAULT_DEVICE_BASE_URL
-#define DEFAULT_DEVICE_BASE_URL "http://192.168.1.200"
+#define DEFAULT_DEVICE_BASE_URL ""
 #endif
 
 #ifndef DEFAULT_DEVICE_USERNAME
-#define DEFAULT_DEVICE_USERNAME "admin"
+#define DEFAULT_DEVICE_USERNAME ""
 #endif
 
 #ifndef DEFAULT_DEVICE_PASSWORD
-#define DEFAULT_DEVICE_PASSWORD "lara1234"
+#define DEFAULT_DEVICE_PASSWORD ""
 #endif
 
 #ifndef DEFAULT_RECEIVER_URL
-#define DEFAULT_RECEIVER_URL "http://209.42.26.200:8001/api/attendance-records"
+#define DEFAULT_RECEIVER_URL ""
 #endif
 
 #ifndef DEFAULT_RECEIVER_TOKEN

@@ -77,7 +77,7 @@ The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
 - Starts an open setup AP by default, named `AttendanceBridge-xxxxxx`.
 - Runs WiFi in `APSTA` mode, so setup AP and station connection can be active at the same time.
 - Stores configuration and the delivery cursor in NVS.
-- Polls the Hikvision terminal at `http://192.168.1.200` using Digest authentication with the configured username and password.
+- Polls the configured Hikvision terminal using Digest authentication.
 - Uses `/ISAPI/AccessControl/AcsEvent?format=json` with a serial cursor and sends one metadata POST per event.
 - When Laravel says a picture is required, streams the exact JPEG from the Hikvision `pictureURL` directly into the receiver's picture upload endpoint.
 - Advances `last_serial` only after Laravel accepts the metadata and any required picture upload.
@@ -85,24 +85,20 @@ The bridge firmware is a native ESP-IDF app for the ESP32-WROOM-32 board.
 - Serves the setup UI at `http://192.168.4.1/` while connected to the setup AP.
 - Serves machine status at `/api/status`.
 
-The default Hikvision settings match the current lab device:
+The firmware has no committed network addresses, credentials, or receiver URL.
+On first boot, connect to its setup AP and enter the terminal and receiver
+settings. An already-configured ESP32 keeps its saved configuration until you
+change it in the setup UI or erase flash.
 
-- Base URL: `http://192.168.1.200`
-- Username: `admin`
-- Password: configured in firmware defaults and editable from the setup UI
+For repeatable private builds, copy `main/local_defaults.example.h` to the
+ignored `main/local_defaults.h` and fill in your values. Do not commit it.
 
-The bridge now defaults to the hosted demo receiver:
+Enter the full `/api/attendance-records` URL that the ESP32 can reach from its
+station network. A public deployment should use HTTPS, for example:
 
 ```text
-http://209.42.26.200:8001/api/attendance-records
+https://attendance.example.com/api/attendance-records
 ```
-
-This default is applied when the bridge has no saved receiver URL in NVS. An
-already-configured ESP32 keeps its saved URL until you change it through the
-setup UI or erase flash.
-
-If you run your own receiver, enter the full `/api/attendance-records` URL that
-the ESP32 can reach from its station network.
 
 For a local development receiver, you can still point it at a LAN endpoint that
 the ESP32 can reach:

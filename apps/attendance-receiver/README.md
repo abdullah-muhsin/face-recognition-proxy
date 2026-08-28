@@ -25,48 +25,40 @@ The picture upload endpoint is `PUT /api/attendance-records/{attendanceRecord}/p
 
 Set `ATTENDANCE_BRIDGE_TOKEN` in production and configure the same token on the ESP32 bridge.
 
-## Rocky Runtime
+## Production Deployment
 
-Use the repository-level Rocky helpers from the workspace root:
+Docker Compose is the supported deployment path. It runs Apache/PHP and uses
+SQLite with named volumes for the database and application storage; the host
+does not need PHP, PHP-FPM, MariaDB, or a Rocky-specific helper.
 
-```bash
-./scripts/rocky-install-system-deps.sh
-./scripts/rocky-deploy-attendance-receiver.sh
-```
-
-The deploy helper starts from `.env.example` when needed, builds the frontend
-assets, applies production-safe app settings, creates the MariaDB database/user,
-syncs the app to `/var/www/attendance-receiver`, applies persistent SELinux
-labels, writes the nginx include under `/etc/nginx/default.d`, runs migrations
-as the PHP-FPM user, and reloads nginx.
-
-The nginx-served endpoints are:
-
-- `GET /attendance-receiver`
-- `GET /attendance-receiver/attendance-records`
-- `POST /attendance-receiver/api/attendance-records`
-- `PUT /attendance-receiver/api/attendance-records/{attendanceRecord}/picture`
-
-## Container Runtime
-
-For a lightweight demo deployment, use the container helper from the workspace
-root:
+From this directory:
 
 ```bash
-ATTENDANCE_RECEIVER_HOST_PORT=8001 \
-./scripts/rocky-deploy-attendance-receiver-container.sh
+cp docker/production.env.example .env.production
+# Set APP_URL to the public HTTPS URL and ATTENDANCE_BRIDGE_TOKEN to a long random secret.
+docker compose run --rm --no-deps --entrypoint php app artisan key:generate --show
+# Put the generated value in APP_KEY in .env.production.
+docker compose up --build -d
 ```
 
-The helper defaults `ATTENDANCE_RECEIVER_PUBLIC_URL` to
-`http://209.42.26.200:8001`; set that variable only when deploying the demo to a
-different host.
+The service is bound to `127.0.0.1:8001` by default. To expose a different host
+port or address, set these shell variables before `docker compose up`:
 
-The container helper builds the Laravel receiver image, generates and preserves
-an application key, stores SQLite and uploaded pictures under
-`~/attendance-receiver-runtime`, runs migrations on startup, and binds Apache to
-`127.0.0.1:8001` by default. Install `deploy/nginx/attendance-receiver.conf` as
-`/etc/nginx/conf.d/attendance-receiver.conf` to expose it through host nginx on
-`http://209.42.26.200:8001`.
+```bash
+ATTENDANCE_RECEIVER_BIND_ADDRESS=127.0.0.1
+ATTENDANCE_RECEIVER_HOST_PORT=8001
+```
 
-That hosted demo is now the canonical bridge target. The ESP32 bridge should
-post to `http://209.42.26.200:8001/api/attendance-records`.
+For a public deployment, terminate TLS in your existing reverse proxy. A generic
+nginx template is available at
+[`../../deploy/nginx/attendance-receiver.conf`](../../deploy/nginx/attendance-receiver.conf);
+replace its example hostname before enabling it.
+
+The public bridge endpoints are:
+
+- `POST /api/attendance-records`
+- `PUT /api/attendance-records/{attendanceRecord}/picture`
+
+Use the complete public API URL, for example
+`https://attendance.example.com/api/attendance-records`, in each bridge’s setup
+UI. The same `ATTENDANCE_BRIDGE_TOKEN` must be configured on the bridge.

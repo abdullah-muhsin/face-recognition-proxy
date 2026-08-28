@@ -1,0 +1,17 @@
+services:
+  app:
+    build:
+      context: .
+    image: attendance-receiver:local
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    ports:
+      - "${ATTENDANCE_RECEIVER_BIND_ADDRESS:-127.0.0.1}:${ATTENDANCE_RECEIVER_HOST_PORT:-8001}:80"
+    volumes:
+      - attendance_receiver_data:/var/lib/attendance-receiver
+      - attendance_receiver_storage:/var/www/html/storage
+
+volumes:
+  attendance_receiver_data:
+  attendance_receiver_storage:
