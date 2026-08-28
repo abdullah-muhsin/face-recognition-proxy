@@ -90,6 +90,10 @@ On first boot, connect to its setup AP and enter the terminal and receiver
 settings. An already-configured ESP32 keeps its saved configuration until you
 change it in the setup UI or erase flash.
 
+The setup AP is intentionally open for initial commissioning. After the
+operator changes the setup settings in the web UI, disable the AP or set its
+password there. Re-enable or reset it only when reconfiguration is required.
+
 For repeatable private builds, copy `main/local_defaults.example.h` to the
 ignored `main/local_defaults.h` and fill in your values. Do not commit it.
 

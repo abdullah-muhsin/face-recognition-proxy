@@ -15,16 +15,8 @@
             </div>
             <div class="header-actions">
                 <a class="button secondary" href="{{ route('attendance-records.index') }}">Refresh</a>
-                <form class="inline-form" method="post" action="{{ route('attendance-records.wipe') }}" onsubmit="return confirm('Delete all attendance records and stored pictures?');">
-                    @csrf
-                    <button class="danger" type="submit">Wipe Records</button>
-                </form>
             </div>
         </header>
-
-        @if (session('status'))
-            <div class="notice" role="status">{{ session('status') }}</div>
-        @endif
 
         <section class="stats">
             <div class="stat">

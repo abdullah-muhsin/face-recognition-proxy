@@ -31,11 +31,14 @@ Docker Compose is the supported deployment path. It runs Apache/PHP and uses
 SQLite with named volumes for the database and application storage; the host
 does not need PHP, PHP-FPM, MariaDB, or a Rocky-specific helper.
 
+This is a single-instance service. Do not run multiple application containers
+against these SQLite volumes.
+
 From this directory:
 
 ```bash
 cp docker/production.env.example .env.production
-# Set APP_URL to the public HTTPS URL and ATTENDANCE_BRIDGE_TOKEN to a long random secret.
+# Set APP_URL and, when desired, ATTENDANCE_BRIDGE_TOKEN.
 docker compose run --rm --no-deps --entrypoint php app artisan key:generate --show
 # Put the generated value in APP_KEY in .env.production.
 docker compose up --build -d
@@ -49,8 +52,8 @@ ATTENDANCE_RECEIVER_BIND_ADDRESS=127.0.0.1
 ATTENDANCE_RECEIVER_HOST_PORT=8001
 ```
 
-For a public deployment, terminate TLS in your existing reverse proxy. A generic
-nginx template is available at
+For a public deployment, use your existing reverse proxy when one is needed. A
+generic nginx template is available at
 [`../../deploy/nginx/attendance-receiver.conf`](../../deploy/nginx/attendance-receiver.conf);
 replace its example hostname before enabling it.
 
@@ -60,5 +63,21 @@ The public bridge endpoints are:
 - `PUT /api/attendance-records/{attendanceRecord}/picture`
 
 Use the complete public API URL, for example
-`https://attendance.example.com/api/attendance-records`, in each bridge’s setup
-UI. The same `ATTENDANCE_BRIDGE_TOKEN` must be configured on the bridge.
+`http://attendance.example.com/api/attendance-records`, in each bridge’s setup
+UI. When `ATTENDANCE_BRIDGE_TOKEN` is set, configure the same value on each
+bridge; leave it blank to permit unauthenticated bridge requests.
+
+### Data Operations
+
+The web interface is read-only: record deletion is intentionally not exposed
+there. Back up both persistent paths before upgrading or changing hosts:
+
+```bash
+mkdir -p backups
+docker compose cp app:/var/lib/attendance-receiver/database.sqlite backups/database.sqlite
+docker compose cp app:/var/www/html/storage backups/storage
+```
+
+To restore, stop the service, copy both paths back to the `app` container, then
+start it again. Never run `docker compose down -v` unless you intentionally want
+to delete all attendance records and pictures.
