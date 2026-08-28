@@ -170,6 +170,39 @@ class AttendanceRecordIngestionTest extends TestCase
         $this->assertNull($record->picture_bytes);
     }
 
+    public function test_operator_can_wipe_attendance_records_and_pictures(): void
+    {
+        Storage::fake('local');
+
+        $response = $this->postJson('/api/attendance-records', $this->payload())
+            ->assertCreated();
+
+        $this->putJpeg($response->json('picture_upload_url'), "\xFF\xD8\xFF\xD9")
+            ->assertOk();
+
+        $record = AttendanceRecord::firstOrFail();
+        Storage::disk('local')->assertExists($record->picture_path);
+
+        $this->post(route('attendance-records.wipe'), [
+            'confirmation' => 'WIPE',
+        ])
+            ->assertRedirect(route('attendance-records.index'))
+            ->assertSessionHas('status', 'Wiped 1 record and its stored pictures.');
+
+        $this->assertSame(0, AttendanceRecord::count());
+        Storage::disk('local')->assertMissing($record->picture_path);
+    }
+
+    public function test_wipe_requires_an_explicit_confirmation(): void
+    {
+        $this->from(route('attendance-records.index'))
+            ->post(route('attendance-records.wipe'), [
+                'confirmation' => 'wipe',
+            ])
+            ->assertRedirect(route('attendance-records.index'))
+            ->assertSessionHasErrors('confirmation');
+    }
+
     public function test_picture_upload_requires_jpeg_bytes(): void
     {
         Storage::fake('local');

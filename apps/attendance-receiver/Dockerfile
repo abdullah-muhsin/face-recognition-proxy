@@ -100,6 +100,11 @@ CMD ["apache2-foreground"]
 
 FROM runtime AS test
 
+ENV APP_ENV=testing \
+    DB_CONNECTION=sqlite \
+    DB_DATABASE=:memory: \
+    DB_URL=
+
 COPY --from=vendor-dev /app/vendor /var/www/html/vendor
 
 FROM runtime AS production

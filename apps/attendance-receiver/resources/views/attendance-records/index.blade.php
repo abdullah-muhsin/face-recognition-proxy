@@ -15,8 +15,23 @@
             </div>
             <div class="header-actions">
                 <a class="button secondary" href="{{ route('attendance-records.index') }}">Refresh</a>
+                <details class="wipe-control">
+                    <summary>Data operations</summary>
+                    <form method="post" action="{{ route('attendance-records.wipe') }}">
+                        @csrf
+                        <label>
+                            Type <code>WIPE</code> to confirm
+                            <input name="confirmation" autocomplete="off" required>
+                        </label>
+                        <button class="danger" type="submit">Wipe all records</button>
+                    </form>
+                </details>
             </div>
         </header>
+
+        @if (session('status'))
+            <div class="notice" role="status">{{ session('status') }}</div>
+        @endif
 
         <section class="stats">
             <div class="stat">

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AttendanceRecord;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -43,6 +44,23 @@ class AttendanceRecordController extends Controller
             'uniqueEmployees' => AttendanceRecord::query()->whereNotNull('employee_no')->distinct('employee_no')->count('employee_no'),
             'uniqueDevices' => AttendanceRecord::query()->distinct('device_key')->count('device_key'),
         ]);
+    }
+
+    public function wipe(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'confirmation' => ['required', 'in:WIPE'],
+        ]);
+
+        $recordCount = AttendanceRecord::query()->count();
+
+        AttendanceRecord::query()->delete();
+        Storage::disk('local')->deleteDirectory('attendance-record-pictures');
+        Storage::disk('local')->makeDirectory('attendance-record-pictures');
+
+        return redirect()
+            ->route('attendance-records.index')
+            ->with('status', $recordCount === 1 ? 'Wiped 1 record and its stored pictures.' : "Wiped {$recordCount} records and their stored pictures.");
     }
 
     public function store(Request $request): JsonResponse

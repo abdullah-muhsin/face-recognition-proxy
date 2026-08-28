@@ -136,6 +136,39 @@ form {
     width: auto;
 }
 
+.wipe-control {
+    position: relative;
+}
+
+.wipe-control summary {
+    color: #b42318;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.wipe-control form {
+    position: absolute;
+    z-index: 2;
+    top: calc(100% + 8px);
+    right: 0;
+    display: grid;
+    width: 280px;
+    padding: 12px;
+    border: 1px solid #fecdca;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 8px 20px rgb(16 24 40 / 15%);
+}
+
+.wipe-control label {
+    display: grid;
+    gap: 4px;
+    color: #475467;
+    font-size: 12px;
+    font-weight: 700;
+}
+
 input {
     width: 100%;
     border: 1px solid #b8c0cc;

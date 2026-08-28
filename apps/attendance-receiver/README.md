@@ -69,8 +69,9 @@ bridge; leave it blank to permit unauthenticated bridge requests.
 
 ### Data Operations
 
-The web interface is read-only: record deletion is intentionally not exposed
-there. Back up both persistent paths before upgrading or changing hosts:
+Open **Data operations** in the web interface and type `WIPE` to delete every
+attendance record and all stored pictures. Back up both persistent paths before
+wiping, upgrading, or changing hosts:
 
 ```bash
 mkdir -p backups
