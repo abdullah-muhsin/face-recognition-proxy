@@ -2,6 +2,10 @@ embedded/**/firmware/**/build/
 embedded/**/firmware/**/managed_components/
 embedded/**/firmware/**/main/local_defaults.h
 
+# Local source/archive bundles; never commit these large generated files.
+/face-recognition-proxy.zip
+/network-service-codebase.zip
+
 docs/**/credentials.local.md
 docs/**/.env.local
 
