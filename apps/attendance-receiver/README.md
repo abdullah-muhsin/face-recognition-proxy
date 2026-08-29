@@ -44,6 +44,47 @@ docker compose run --rm --no-deps --entrypoint php app artisan key:generate --sh
 docker compose up --build -d
 ```
 
+### Release To The Production VPS
+
+Push the release branch to `origin` first. The current Aruvo deployment runs
+rootless Docker as `abdullah`, with its existing SQLite database and uploaded
+pictures bind-mounted from `/home/abdullah/attendance-receiver-runtime`. The
+release script validates those exact mounts and the `127.0.0.1:8001` binding,
+builds the new image before cutover, and retains the stopped prior container
+for rollback. It does not run Docker Compose or modify any other container.
+
+The VPS does not yet have a Git checkout. Run this bootstrap preflight from the
+repository root on a workstation with SSH access:
+
+```bash
+# Validate the live container and confirm the one-time checkout that would be
+# created. This does not modify the VPS.
+./scripts/release-production.sh \
+  --host vps-aruvo \
+  --project-dir /home/abdullah/face-recognition-proxy \
+  --bootstrap \
+  --dry-run
+
+# After the intended commits are pushed to origin/main, clone, build, and
+# replace the attendance container while preserving its existing data.
+./scripts/release-production.sh \
+  --host vps-aruvo \
+  --project-dir /home/abdullah/face-recognition-proxy \
+  --bootstrap
+
+# Later releases only need the normal preflight and release commands.
+./scripts/release-production.sh \
+  --host vps-aruvo \
+  --project-dir /home/abdullah/face-recognition-proxy \
+  --dry-run
+```
+
+`vps-aruvo` is the configured SSH alias in this workspace. `--bootstrap` is
+deliberately required only for the initial clone. Use `--branch` to release a
+branch other than `main`. Later releases stop if tracked or untracked files are
+present remotely, so they cannot silently overwrite an ad-hoc production edit
+or build files outside the Git revision.
+
 The service is bound to `127.0.0.1:8001` by default. To expose a different host
 port or address, set these shell variables before `docker compose up`:
 
