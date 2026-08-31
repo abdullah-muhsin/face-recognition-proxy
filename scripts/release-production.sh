@@ -192,11 +192,21 @@ restore_fresh_database_backup() {
     [ "$fresh_database_started" = true ] || return 0
     [ -n "$backup_dir" ] || return 0
 
-    as_deploy cp --preserve=mode,timestamps "$backup_dir/database.sqlite" "$database_file"
-    as_deploy rm -rf -- "$picture_directory"
-    as_deploy mkdir -p "$storage_dir/app/private"
-    as_deploy tar --extract --gzip --file "$backup_dir/attendance-record-pictures.tar.gz" \
-        --directory "$storage_dir/app/private"
+    as_deploy docker run --rm \
+        --volume "$data_dir:/var/lib/attendance-receiver" \
+        --volume "$storage_dir:/var/www/html/storage" \
+        --volume "$backup_dir:/backup:ro" \
+        --entrypoint sh \
+        "$image_tag" -c '
+            set -eu
+            cd /backup
+            sha256sum --check SHA256SUMS
+            cp --preserve=mode,timestamps /backup/database.sqlite /var/lib/attendance-receiver/database.sqlite
+            rm -rf -- /var/www/html/storage/app/private/attendance-record-pictures
+            mkdir -p /var/www/html/storage/app/private
+            tar --extract --gzip --file /backup/attendance-record-pictures.tar.gz \
+                --directory /var/www/html/storage/app/private
+        '
     echo "release-production: restored the attendance database and pictures from $backup_dir" >&2
 }
 
@@ -316,13 +326,20 @@ fi
 if [ "$fresh_database" = true ]; then
     backup_dir="$runtime_dir/backups/attendance-receiver-$(date -u +%Y%m%dT%H%M%SZ)"
     as_deploy install -d -m 700 "$backup_dir"
-    as_deploy cp --preserve=mode,timestamps "$database_file" "$backup_dir/database.sqlite"
-    as_deploy tar --create --gzip --file "$backup_dir/attendance-record-pictures.tar.gz" \
-        --directory "$storage_dir/app/private" attendance-record-pictures
-    as_deploy sh -c 'sha256sum "$1" "$2" > "$3"' sh \
-        "$backup_dir/database.sqlite" \
-        "$backup_dir/attendance-record-pictures.tar.gz" \
-        "$backup_dir/SHA256SUMS"
+    as_deploy docker run --rm \
+        --volume "$data_dir:/var/lib/attendance-receiver:ro" \
+        --volume "$storage_dir:/var/www/html/storage:ro" \
+        --volume "$backup_dir:/backup" \
+        --entrypoint sh \
+        "$image_tag" -c '
+            set -eu
+            cp --preserve=mode,timestamps /var/lib/attendance-receiver/database.sqlite /backup/database.sqlite
+            tar --create --gzip --file /backup/attendance-record-pictures.tar.gz \
+                --directory /var/www/html/storage/app/private attendance-record-pictures
+            cd /backup
+            sha256sum database.sqlite attendance-record-pictures.tar.gz > SHA256SUMS
+            sha256sum --check SHA256SUMS
+        '
 
     fresh_database_started=true
     as_deploy docker run --rm \
@@ -331,8 +348,13 @@ if [ "$fresh_database" = true ]; then
         --volume "$storage_dir:/var/www/html/storage" \
         --entrypoint php \
         "$image_tag" artisan migrate:fresh --force --no-interaction
-    as_deploy rm -rf -- "$picture_directory"
-    as_deploy install -d -m 755 "$picture_directory"
+    as_deploy docker run --rm \
+        --volume "$storage_dir:/var/www/html/storage" \
+        --entrypoint sh \
+        "$image_tag" -c '
+            rm -rf -- /var/www/html/storage/app/private/attendance-record-pictures
+            mkdir -p /var/www/html/storage/app/private/attendance-record-pictures
+        '
     echo "Fresh attendance database ready. Backup retained at $backup_dir"
 fi
 
