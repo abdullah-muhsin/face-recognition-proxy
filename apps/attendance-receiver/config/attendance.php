@@ -6,6 +6,6 @@ return [
     'push_sdk_gateway' => [
         // This is solely for the gateway-to-Laravel private hop. It is never
         // a terminal credential and must be set in every production deployment.
-        'gateway_token' => env('ATTENDANCE_PUSH_GATEWAY_TOKEN', ''),
+        'token' => env('ATTENDANCE_PUSH_GATEWAY_TOKEN', ''),
     ],
 ];
