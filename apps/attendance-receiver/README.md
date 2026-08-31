@@ -105,8 +105,8 @@ release script validates those exact mounts and the `127.0.0.1:8001` binding,
 builds the new image before cutover, and retains the stopped prior container
 for rollback. It does not run Docker Compose or modify any other container.
 
-The VPS does not yet have a Git checkout. Run this bootstrap preflight from the
-repository root on a workstation with SSH access:
+For an initial VPS checkout, run this bootstrap preflight from the repository
+root on a workstation with SSH access:
 
 ```bash
 # Validate the live container and confirm the one-time checkout that would be
@@ -172,24 +172,32 @@ The attendance schema is a clean baseline: one creator migration for terminals
 and one for records. This release deliberately requires a fresh database; it
 does not contain an upgrade compatibility migration.
 
-After the new container has been released, stop event delivery, take the backup
-shown below, then run this exact command on the VPS:
+Use the release script's explicit `--fresh-database` mode for this one release:
 
 ```bash
-docker exec attendance_receiver php artisan migrate:fresh --force
+./scripts/release-production.sh \
+  --host vps-aruvo \
+  --project-dir /home/abdullah/face-recognition-proxy \
+  --fresh-database \
+  --dry-run
+
+./scripts/release-production.sh \
+  --host vps-aruvo \
+  --project-dir /home/abdullah/face-recognition-proxy \
+  --fresh-database
 ```
 
-This drops all application tables, including attendance records, operator
-accounts, registered terminals, cache, and jobs. It does not remove stored
-record pictures, so remove those separately to avoid orphaned files:
-
-```bash
-docker exec attendance_receiver sh -c \
-  'find storage/app/private/attendance-record-pictures -type f -name "*.jpg" -delete'
-```
+It creates a timestamped backup of this app's SQLite database and attendance
+pictures under `/home/abdullah/attendance-receiver-runtime/backups`, verifies
+the archive checksums, then stops only `attendance_receiver`, runs
+`migrate:fresh`, and removes the now-orphaned attendance pictures. If the
+fresh migration or new-container health check fails, the script restores that
+backup before starting the prior attendance container. The reset drops all
+application tables, including attendance records, operator accounts, registered
+terminals, cache, and jobs.
 
 Then recreate the operator and each direct Push SDK terminal before resuming
-event delivery. Do not run `migrate:fresh` during a normal future release.
+event delivery. Do not use `--fresh-database` during a normal future release.
 
 ### Data Operations
 

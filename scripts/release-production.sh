@@ -19,6 +19,9 @@ Options:
   --branch NAME           Git branch to release (default: main).
   --bootstrap             Permit the one-time clone when --project-dir does not
                           yet exist. The existing runtime data is retained.
+  --fresh-database        Archive this app's SQLite database and attendance
+                          pictures, then rebuild the database from this
+                          release's migrations before starting the new app.
   --dry-run               Validate the server and report the pending release;
                           do not change the checkout, image, or container.
   -h, --help              Show this help text.
@@ -41,6 +44,7 @@ project_dir="${ARUVO_PROJECT_DIR:-}"
 runtime_dir="${ARUVO_RUNTIME_DIR:-/home/abdullah/attendance-receiver-runtime}"
 branch="${ARUVO_RELEASE_BRANCH:-main}"
 bootstrap=false
+fresh_database=false
 dry_run=false
 
 require_value() {
@@ -79,6 +83,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --bootstrap)
             bootstrap=true
+            shift
+            ;;
+        --fresh-database)
+            fresh_database=true
             shift
             ;;
         --dry-run)
@@ -132,7 +140,7 @@ echo "Releasing '$branch' to '$ssh_target' as '$deploy_user'"
 
 ssh -- "$ssh_target" bash -s -- \
     "$deploy_user" "$project_dir" "$runtime_dir" "$branch" \
-    "$origin_url" "$bootstrap" "$dry_run" <<'REMOTE_SCRIPT'
+    "$origin_url" "$bootstrap" "$fresh_database" "$dry_run" <<'REMOTE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -142,14 +150,19 @@ runtime_dir="$3"
 branch="$4"
 origin_url="$5"
 bootstrap="$6"
-dry_run="$7"
+fresh_database="$7"
+dry_run="$8"
 app_dir="$project_dir/apps/attendance-receiver"
 runtime_env="$runtime_dir/runtime.env"
 data_dir="$runtime_dir/data"
 storage_dir="$runtime_dir/storage"
+database_file="$data_dir/database.sqlite"
+picture_directory="$storage_dir/app/private/attendance-record-pictures"
 container_name="attendance_receiver"
 bind_address="127.0.0.1"
 host_port="8001"
+backup_dir=""
+fresh_database_started=false
 
 fail() {
     echo "release-production: $*" >&2
@@ -175,6 +188,18 @@ as_deploy() {
     fi
 }
 
+restore_fresh_database_backup() {
+    [ "$fresh_database_started" = true ] || return 0
+    [ -n "$backup_dir" ] || return 0
+
+    as_deploy cp --preserve=mode,timestamps "$backup_dir/database.sqlite" "$database_file"
+    as_deploy rm -rf -- "$picture_directory"
+    as_deploy mkdir -p "$storage_dir/app/private"
+    as_deploy tar --extract --gzip --file "$backup_dir/attendance-record-pictures.tar.gz" \
+        --directory "$storage_dir/app/private"
+    echo "release-production: restored the attendance database and pictures from $backup_dir" >&2
+}
+
 [ -d "$runtime_dir" ] || fail "runtime directory not found: $runtime_dir"
 [ -d "$data_dir" ] || fail "data directory not found: $data_dir"
 [ -d "$storage_dir" ] || fail "storage directory not found: $storage_dir"
@@ -198,6 +223,16 @@ if [ -n "$existing_id" ]; then
     existing_port="$(as_deploy docker inspect --format '{{range $port, $bindings := .HostConfig.PortBindings}}{{range $bindings}}{{printf "%s:%s\n" .HostIp .HostPort}}{{end}}{{end}}' "$existing_id")"
     printf '%s\n' "$existing_port" | grep -Fqx "$bind_address:$host_port" \
         || fail "existing '$container_name' is not bound to $bind_address:$host_port"
+fi
+
+if [ "$fresh_database" = true ]; then
+    [ -n "$existing_id" ] || fail "--fresh-database requires a running '$container_name' container"
+    [ -f "$database_file" ] || fail "attendance database not found: $database_file"
+    [ -d "$picture_directory" ] || fail "attendance picture directory not found: $picture_directory"
+    configured_database_path="$(as_deploy docker exec "$existing_id" php -r \
+        '$data = getenv("ATTENDANCE_RECEIVER_DATA_DIR") ?: "/var/lib/attendance-receiver"; echo getenv("DB_DATABASE") ?: $data . "/database.sqlite";')"
+    [ "$configured_database_path" = '/var/lib/attendance-receiver/database.sqlite' ] \
+        || fail "attendance database path is not the supported runtime path: $configured_database_path"
 fi
 
 if [ ! -d "$project_dir/.git" ]; then
@@ -238,6 +273,9 @@ if [ "$dry_run" = true ]; then
     current_commit="$(as_deploy git -C "$project_dir" rev-parse HEAD)"
     echo "Dry run passed. VPS commit: $current_commit"
     echo "Origin commit:  $origin_commit"
+    if [ "$fresh_database" = true ]; then
+        echo "Fresh database dry run passed. Would archive $database_file and $picture_directory under $runtime_dir/backups/."
+    fi
     exit 0
 fi
 
@@ -259,6 +297,7 @@ rollback() {
     if [ "$new_container_started" = true ]; then
         as_deploy docker rm --force "$container_name" >/dev/null 2>&1 || true
     fi
+    restore_fresh_database_backup || true
     if [ -n "$previous_container" ]; then
         as_deploy docker rename "$previous_container" "$container_name" >/dev/null 2>&1 || true
         as_deploy docker start "$container_name" >/dev/null 2>&1 || true
@@ -272,6 +311,29 @@ if [ -n "$existing_id" ]; then
     previous_container="${container_name}_previous_$(date -u +%Y%m%dT%H%M%SZ)"
     as_deploy docker rename "$container_name" "$previous_container"
     as_deploy docker stop "$previous_container" >/dev/null
+fi
+
+if [ "$fresh_database" = true ]; then
+    backup_dir="$runtime_dir/backups/attendance-receiver-$(date -u +%Y%m%dT%H%M%SZ)"
+    as_deploy install -d -m 700 "$backup_dir"
+    as_deploy cp --preserve=mode,timestamps "$database_file" "$backup_dir/database.sqlite"
+    as_deploy tar --create --gzip --file "$backup_dir/attendance-record-pictures.tar.gz" \
+        --directory "$storage_dir/app/private" attendance-record-pictures
+    as_deploy sh -c 'sha256sum "$1" "$2" > "$3"' sh \
+        "$backup_dir/database.sqlite" \
+        "$backup_dir/attendance-record-pictures.tar.gz" \
+        "$backup_dir/SHA256SUMS"
+
+    fresh_database_started=true
+    as_deploy docker run --rm \
+        --env-file "$runtime_env" \
+        --volume "$data_dir:/var/lib/attendance-receiver" \
+        --volume "$storage_dir:/var/www/html/storage" \
+        --entrypoint php \
+        "$image_tag" artisan migrate:fresh --force --no-interaction
+    as_deploy rm -rf -- "$picture_directory"
+    as_deploy install -d -m 755 "$picture_directory"
+    echo "Fresh attendance database ready. Backup retained at $backup_dir"
 fi
 
 as_deploy docker run --detach \
