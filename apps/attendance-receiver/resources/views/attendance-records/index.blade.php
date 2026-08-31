@@ -15,6 +15,10 @@
             </div>
             <div class="header-actions">
                 <a class="button secondary" href="{{ route('attendance-records.index') }}">Refresh</a>
+                <form method="post" action="{{ route('logout') }}">
+                    @csrf
+                    <button class="button ghost" type="submit">Sign out</button>
+                </form>
                 <details class="wipe-control">
                     <summary>Data operations</summary>
                     <form method="post" action="{{ route('attendance-records.wipe') }}">
@@ -22,6 +26,10 @@
                         <label>
                             Type <code>WIPE</code> to confirm
                             <input name="confirmation" autocomplete="off" required>
+                        </label>
+                        <label>
+                            Your password
+                            <input name="password" type="password" autocomplete="current-password" required>
                         </label>
                         <button class="danger" type="submit">Wipe all records</button>
                     </form>
@@ -43,13 +51,13 @@
                 <strong>{{ number_format($uniqueEmployees) }}</strong>
             </div>
             <div class="stat">
-                <span>Devices</span>
-                <strong>{{ number_format($uniqueDevices) }}</strong>
+                <span>Terminals</span>
+                <strong>{{ number_format($uniqueTerminals) }}</strong>
             </div>
             <div class="stat">
                 <span>Latest</span>
-                <strong>{{ $latestRecord?->event_serial_no ?? '-' }}</strong>
-                <small>{{ $latestRecord?->event_time?->format('M j H:i') ?? 'No events' }}</small>
+                <strong>{{ $latestRecord?->vendor_event_id ?? $latestRecord?->legacy_event_serial_number ?? '-' }}</strong>
+                <small>{{ $latestRecord?->occurred_at?->format('M j H:i') ?? 'No events' }}</small>
             </div>
         </section>
 
@@ -59,7 +67,7 @@
                     <input
                         name="search"
                         value="{{ $search }}"
-                        placeholder="Search employee, device serial, bridge, or event serial"
+                        placeholder="Search employee, terminal, source, or event"
                     >
                     <button type="submit">Search</button>
                     @if ($search !== '')
@@ -78,9 +86,9 @@
                             <th>Event</th>
                             <th>Time</th>
                             <th>Status</th>
-                            <th>Device</th>
-                            <th>Bridge</th>
-                            <th>Raw</th>
+                            <th>Terminal</th>
+                            <th>Source</th>
+                            <th>Payload</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -92,7 +100,7 @@
                                             <img
                                                 class="record-picture"
                                                 src="{{ route('attendance-records.picture', $record) }}"
-                                                alt="Attendance record #{{ $record->event_serial_no }} picture"
+                                                alt="Attendance record #{{ $record->vendor_event_id ?? $record->legacy_event_serial_number }} picture"
                                             >
                                         </a>
                                         <span class="tiny">{{ number_format($record->picture_bytes ?? 0) }} bytes</span>
@@ -104,34 +112,34 @@
                                 </td>
                                 <td>
                                     <strong>{{ $record->employee_name ?: '-' }}</strong>
-                                    <span class="line-muted">{{ $record->employee_no ?: '-' }}</span>
+                                    <span class="line-muted">{{ $record->employee_number ?: '-' }}</span>
                                 </td>
                                 <td>
-                                    <code>#{{ $record->event_serial_no }}</code><br>
-                                    <span class="line-muted">major {{ $record->major ?? '-' }} / minor {{ $record->minor ?? '-' }}</span>
+                                    <code>#{{ $record->vendor_event_id ?? $record->legacy_event_serial_number ?? '-' }}</code><br>
+                                    <span class="line-muted">{{ $record->vendor_event_id ? 'Attendance event' : "major {$record->legacy_event_major} / minor {$record->legacy_event_minor}" }}</span>
                                 </td>
                                 <td>
-                                    {{ $record->event_time?->format('Y-m-d H:i:s P') ?? '-' }}<br>
-                                    <span class="line-muted">recv {{ $record->created_at->format('H:i:s') }}</span>
+                                    {{ $record->occurred_at?->format('Y-m-d H:i:s P') ?? '-' }}<br>
+                                    <span class="line-muted">recv {{ ($record->received_at ?? $record->created_at)->format('H:i:s') }}</span>
                                 </td>
                                 <td>
                                     <span class="badge">{{ $record->attendance_status ?: 'undefined' }}</span>
-                                    <span class="line-muted">value {{ $record->status_value ?? 0 }}</span>
-                                    <span class="line-muted">{{ $record->current_verify_mode ?: '-' }}</span>
+                                    <span class="line-muted">value {{ $record->attendance_status_value ?? 0 }}</span>
+                                    <span class="line-muted">{{ $record->verification_method ?: '-' }}</span>
                                 </td>
                                 <td>
-                                    <strong>{{ $record->device_name ?: $record->device_model ?: '-' }}</strong>
-                                    <span class="line-muted">{{ $record->device_model ?: '-' }}</span>
-                                    <code>{{ $record->device_serial_number ?: $record->device_key }}</code>
+                                    <strong>{{ $record->terminal?->display_name ?: $record->terminal_name ?: $record->terminal_model ?: '-' }}</strong>
+                                    <span class="line-muted">{{ $record->terminal_model ?: '-' }}</span>
+                                    <code>{{ $record->terminal_serial_number }}</code>
                                 </td>
                                 <td>
-                                    <code>{{ $record->bridge_id }}</code><br>
-                                    <span class="line-muted">{{ $record->firmware ?: '-' }}</span>
+                                    <code>{{ $record->ingestion_source }}</code><br>
+                                    <span class="line-muted">{{ $record->bridge_firmware ?: '-' }}</span>
                                 </td>
                                 <td>
                                     <details>
                                         <summary>JSON</summary>
-                                        <pre>{{ json_encode($record->raw_event, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+                                        <pre>{{ json_encode($record->source_payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
                                     </details>
                                 </td>
                             </tr>

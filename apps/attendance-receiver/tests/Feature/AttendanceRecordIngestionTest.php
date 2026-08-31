@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\AttendanceRecord;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -34,17 +36,17 @@ class AttendanceRecordIngestionTest extends TestCase
 
         $this->assertSame(1, AttendanceRecord::count());
         $record = AttendanceRecord::firstOrFail();
-        $this->assertSame('esp32-test', $record->bridge_id);
-        $this->assertSame('DS-K1A340FWX20240102V010207ENJ59360966', $record->device_key);
-        $this->assertSame('1001', $record->employee_no);
-        $this->assertSame('faceOrFpOrCardOrPw', $record->current_verify_mode);
+        $this->assertSame('esp32-test', $record->bridge_identifier);
+        $this->assertSame('DS-K1A340FWX20240102V010207ENJ59360966', $record->terminal_serial_number);
+        $this->assertSame('1001', $record->employee_number);
+        $this->assertSame('faceOrFpOrCardOrPw', $record->verification_method);
         $this->assertTrue($record->picture_expected);
         $this->assertNull($record->picture_content_type);
         $this->assertNull($record->picture_bytes);
         $this->assertNull($record->picture_sha256);
-        $this->assertSame(75, $record->raw_event['serialNo']);
-        $this->assertArrayNotHasKey('pictureURL', $record->raw_event);
-        $this->assertArrayNotHasKey('picture', $record->payload['event']);
+        $this->assertSame(75, $record->legacy_raw_event['serialNo']);
+        $this->assertArrayNotHasKey('pictureURL', $record->legacy_raw_event);
+        $this->assertArrayNotHasKey('picture', $record->source_payload['event']);
 
         $picture = "\xFF\xD8\xFF\xD9";
         $this->putJpeg($uploadUrl, $picture)
@@ -66,7 +68,8 @@ class AttendanceRecordIngestionTest extends TestCase
             ->assertJsonPath('picture_upload_url', null)
             ->assertJsonPath('picture_stored', true);
 
-        $this->get(route('attendance-records.picture', $record))
+        $this->actingAs($this->operator())
+            ->get(route('attendance-records.picture', $record))
             ->assertOk()
             ->assertHeader('Content-Type', 'image/jpeg');
     }
@@ -98,7 +101,7 @@ class AttendanceRecordIngestionTest extends TestCase
     {
         Storage::fake('local');
 
-        $picture = "\xFF\xD8\xFF".str_repeat("\x00", 66805 - 3);
+        $picture = "\xFF\xD8\xFF".str_repeat("\x00", 66805 - 5)."\xFF\xD9";
         $payload = $this->payload();
         $payload['event']['serialNo'] = 118;
         $payload['event']['raw']['serialNo'] = 118;
@@ -170,9 +173,29 @@ class AttendanceRecordIngestionTest extends TestCase
         $this->assertNull($record->picture_bytes);
     }
 
+    public function test_it_requires_the_terminal_serial_number_and_an_rfc3339_event_timestamp(): void
+    {
+        $missingSerialNumber = $this->payload();
+        unset($missingSerialNumber['device']['serial_number']);
+
+        $this->postJson('/api/attendance-records', $missingSerialNumber)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('device.serial_number');
+
+        $invalidTimestamp = $this->payload();
+        $invalidTimestamp['event']['time'] = '2026-07-06 00:38:32';
+
+        $this->postJson('/api/attendance-records', $invalidTimestamp)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('event.time');
+
+        $this->assertSame(0, AttendanceRecord::count());
+    }
+
     public function test_operator_can_wipe_attendance_records_and_pictures(): void
     {
         Storage::fake('local');
+        $operator = $this->operator();
 
         $response = $this->postJson('/api/attendance-records', $this->payload())
             ->assertCreated();
@@ -183,8 +206,9 @@ class AttendanceRecordIngestionTest extends TestCase
         $record = AttendanceRecord::firstOrFail();
         Storage::disk('local')->assertExists($record->picture_path);
 
-        $this->post(route('attendance-records.wipe'), [
+        $this->actingAs($operator)->post(route('attendance-records.wipe'), [
             'confirmation' => 'WIPE',
+            'password' => 'correct-horse-battery-staple',
         ])
             ->assertRedirect(route('attendance-records.index'))
             ->assertSessionHas('status', 'Wiped 1 record and its stored pictures.');
@@ -195,9 +219,11 @@ class AttendanceRecordIngestionTest extends TestCase
 
     public function test_wipe_requires_an_explicit_confirmation(): void
     {
-        $this->from(route('attendance-records.index'))
+        $this->actingAs($this->operator())
+            ->from(route('attendance-records.index'))
             ->post(route('attendance-records.wipe'), [
                 'confirmation' => 'wipe',
+                'password' => 'correct-horse-battery-staple',
             ])
             ->assertRedirect(route('attendance-records.index'))
             ->assertSessionHasErrors('confirmation');
@@ -262,5 +288,12 @@ class AttendanceRecordIngestionTest extends TestCase
         return $this->call('PUT', parse_url($url, PHP_URL_PATH) ?: $url, [], [], [], [
             'CONTENT_TYPE' => 'image/jpeg',
         ], $picture);
+    }
+
+    private function operator(): User
+    {
+        return User::factory()->create([
+            'password' => Hash::make('correct-horse-battery-staple'),
+        ]);
     }
 }

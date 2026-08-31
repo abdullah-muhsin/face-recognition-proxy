@@ -107,4 +107,7 @@ ENV APP_ENV=testing \
 
 COPY --from=vendor-dev /app/vendor /var/www/html/vendor
 
+ENTRYPOINT []
+CMD ["php", "vendor/bin/phpunit"]
+
 FROM runtime AS production
