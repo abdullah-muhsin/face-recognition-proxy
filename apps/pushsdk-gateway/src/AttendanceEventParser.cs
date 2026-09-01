@@ -317,6 +317,12 @@ public sealed partial class AttendanceEventParser
             {
                 var lfHeaderTerminatorIndex = IndexOf(rawData, lfHeaderTerminator, position);
                 var nextDelimiterIndex = IndexOfBoundaryDelimiter(rawData, delimiter, position);
+                if (nextDelimiterIndex < 0 && TryCreateHeaderlessMetadataPart(rawData, position, out var headerlessPart))
+                {
+                    parts.Add(headerlessPart);
+                    break;
+                }
+
                 throw new ProtocolException(
                     400,
                     $"Event '{eventId}' boundaryData part is missing its header terminator " +
@@ -453,6 +459,41 @@ public sealed partial class AttendanceEventParser
     }
 
     private static int RelativeOffset(int index, int startIndex) => index < 0 ? -1 : index - startIndex;
+
+    private static bool TryCreateHeaderlessMetadataPart(byte[] source, int startIndex, out BoundaryPart part)
+    {
+        var endIndex = source.Length;
+        while (endIndex > startIndex && source[endIndex - 1] is (byte)'\r' or (byte)'\n' or (byte)' ' or (byte)'\t')
+        {
+            endIndex--;
+        }
+
+        while (startIndex < endIndex && source[startIndex] is (byte)'\r' or (byte)'\n' or (byte)' ' or (byte)'\t')
+        {
+            startIndex++;
+        }
+
+        if (startIndex >= endIndex)
+        {
+            part = default!;
+            return false;
+        }
+
+        var contentType = source[startIndex] switch
+        {
+            (byte)'{' => "application/json",
+            (byte)'<' => "application/xml",
+            _ => null,
+        };
+        if (contentType is null)
+        {
+            part = default!;
+            return false;
+        }
+
+        part = new BoundaryPart(contentType, source.AsSpan(startIndex, endIndex - startIndex).ToArray());
+        return true;
+    }
 
     private static int FindInitialBoundary(byte[] source, byte[] delimiter, int startIndex)
     {
