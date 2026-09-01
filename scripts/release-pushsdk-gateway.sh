@@ -9,7 +9,7 @@ Usage:
   scripts/release-pushsdk-gateway.sh [options]
 
 Options:
-  --host SSH_TARGET       SSH target (default: vps-aruvo).
+  --host SSH_TARGET       SSH target (default: aruvo-vps).
   --deploy-user USER      VPS user that owns rootless Docker (default: abdullah).
   --project-dir PATH      Absolute path for this repository's VPS checkout
                           (default: /home/DEPLOY_USER/services/apps/face-recognition-proxy).
@@ -36,7 +36,7 @@ container as a stopped rollback candidate.
 USAGE
 }
 
-ssh_target="${ARUVO_SSH_TARGET:-vps-aruvo}"
+ssh_target="${ARUVO_SSH_TARGET:-aruvo-vps}"
 deploy_user="${ARUVO_DEPLOY_USER:-abdullah}"
 project_dir="${ARUVO_PROJECT_DIR:-}"
 runtime_dir="${ARUVO_PUSHSDK_GATEWAY_RUNTIME_DIR:-}"
