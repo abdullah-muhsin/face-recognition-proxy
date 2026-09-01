@@ -1,16 +1,3 @@
-embedded/**/firmware/**/build/
-embedded/**/firmware/**/managed_components/
-embedded/**/firmware/**/main/local_defaults.h
-
-# Local source/archive bundles; never commit these large generated files.
-/face-recognition-proxy.zip
-/network-service-codebase.zip
-/third_party/hikvision/
-
-# Complete local source snapshots created before an intentional platform rebuild.
-# They are retained for recovery only and must never become release inputs.
-/backups/
-
 # Terminal connection details and deployment credentials are local-only.
 /config/terminals.json
 .env
@@ -19,13 +6,6 @@ embedded/**/firmware/**/main/local_defaults.h
 
 docs/**/credentials.local.md
 docs/**/.env.local
-
-apps/**/.env
-apps/**/.env.*
-!apps/**/.env.example
-apps/**/vendor/
-apps/**/node_modules/
-apps/**/public/build/
 
 # Workstation copies of production credentials. These files must never be
 # committed, archived with source bundles, or served by an application.

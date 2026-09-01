@@ -2,8 +2,8 @@
 
 Use this runbook when adding or reconfiguring a terminal. The public virtual
 host deliberately denies readiness and metrics paths, so health checks are made
-only through the VPS loopback listener. Existing legacy services are already
-retired; this runbook does not start, stop, or reconfigure unrelated projects.
+only through the VPS loopback listener. This runbook does not start, stop, or
+reconfigure unrelated projects.
 
 ## Prepare the protected configuration
 
@@ -54,4 +54,4 @@ challenge, and it must not alter terminal configuration automatically.
 
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a
-legacy parser fallback to force the test through.
+permissive parser fallback to force the test through.

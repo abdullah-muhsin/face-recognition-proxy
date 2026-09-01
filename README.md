@@ -1,10 +1,7 @@
 # PushSDK Gateway
 
-The old Laravel receiver and .NET gateway have been retired from the active
-source tree. Their complete pre-rebuild source snapshot is retained locally in
-the ignored `backups/` directory. This repository is now a single production
-application built with Go, PostgreSQL, Vue 3/Vite (JavaScript), Tailwind CSS,
-PrimeVue, WebSockets, and Prometheus.
+This repository is a single production application built with Go, PostgreSQL,
+Vue 3/Vite (JavaScript), Tailwind CSS, PrimeVue, WebSockets, and Prometheus.
 
 ## Service boundary
 
@@ -28,10 +25,10 @@ hashed operator sessions. Every valid PushSDK `eventList` item is deduplicated
 with the terminal serial plus its vendor UUID, so device retries are safe and
 do not create duplicate events.
 
-The gateway does not contain an HTTP forwarder, Laravel runtime, queue, SQLite
-fallback, or separate audit-event ledger. A successfully acknowledged device
-event has already been committed to PostgreSQL. If PostgreSQL is unavailable,
-the event is rejected so the terminal can retry; it is never silently dropped.
+The gateway does not contain an HTTP forwarder, queue, SQLite fallback, or
+separate audit-event ledger. A successfully acknowledged device event has
+already been committed to PostgreSQL. If PostgreSQL is unavailable, the event
+is rejected so the terminal can retry; it is never silently dropped.
 
 Live monitor messages and JSON logs contain status and protocol metadata only.
 They deliberately exclude encrypted protocol bodies and terminal credentials.

@@ -55,7 +55,7 @@ func expectedLoginPassword(terminal config.Terminal, salt, challenge string, ite
 
 // loginPasswordHash selects the one digest explicitly configured for this
 // terminal. Config validation rejects every other value, so this never guesses
-// a legacy digest after an authentication failure.
+// a different digest after an authentication failure.
 func loginPasswordHash(digest string) func() hash.Hash {
 	switch digest {
 	case "sha1":

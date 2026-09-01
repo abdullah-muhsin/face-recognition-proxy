@@ -113,6 +113,6 @@ func TestValidateEmptyCommandResultRequiresDocumentedTopLevelFields(t *testing.T
 		t.Fatalf("valid no-command result: %v", err)
 	}
 	if err := validateEmptyCommandResult([]byte(`{"data":{"commandNum":0,"commandList":[]}}`)); err == nil {
-		t.Fatal("legacy data wrapper must be rejected")
+		t.Fatal("unexpected data wrapper must be rejected")
 	}
 }

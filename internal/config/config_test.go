@@ -34,7 +34,7 @@ func TestLoadRequiresExplicitSecuritySettingsAndCurrentTerminalSchema(t *testing
 	}
 }
 
-func TestLoadRejectsLegacyDigestFieldWithoutCompatibilityFallback(t *testing.T) {
+func TestLoadRejectsDeprecatedDigestFieldWithoutCompatibilityFallback(t *testing.T) {
 	directory := t.TempDir()
 	terminalsFile := filepath.Join(directory, "terminals.json")
 	if err := os.WriteFile(terminalsFile, []byte(`[
@@ -53,7 +53,7 @@ func TestLoadRejectsLegacyDigestFieldWithoutCompatibilityFallback(t *testing.T) 
 	}
 	setRequiredEnvironment(t, terminalsFile)
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unknown field") {
-		t.Fatalf("Load() error = %v, want legacy digest field rejection", err)
+		t.Fatalf("Load() error = %v, want deprecated digest field rejection", err)
 	}
 }
 
