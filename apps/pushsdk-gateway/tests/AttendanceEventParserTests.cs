@@ -47,6 +47,23 @@ public sealed class AttendanceEventParserTests
     }
 
     [Fact]
+    public void ParsesTheDirectBoundaryEnvelopeSentByTheTerminal()
+    {
+        using var environment = new TestEnvironment();
+        var parser = new AttendanceEventParser(environment.CreateOptions());
+        var metadata = TestProtocol.AccessEventJson("2003");
+        var rawBoundary = BuildBoundaryPayload(metadata, null, includeHttpStatusLine: false);
+        var body = TestProtocol.BuildEventEnvelope("event-direct-boundary-1", "boundaryData", rawBoundary);
+
+        var parsed = Assert.Single(parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
+        var delivery = Assert.IsType<DeliveryEvent>(parsed.Delivery);
+
+        Assert.Equal("2003", delivery.Event.EmployeeNumber);
+        Assert.False(delivery.Event.PictureExpected);
+        Assert.Null(delivery.Picture);
+    }
+
+    [Fact]
     public void RejectsAnAccessEventMissingItsRequiredEmployeeNumber()
     {
         using var environment = new TestEnvironment();
@@ -79,7 +96,7 @@ public sealed class AttendanceEventParserTests
         Assert.Null(parsed.Delivery);
     }
 
-    private static byte[] BuildBoundaryPayload(byte[] metadata, byte[] picture)
+    private static byte[] BuildBoundaryPayload(byte[] metadata, byte[]? picture, bool includeHttpStatusLine = true)
     {
         const string boundary = "hikvision-boundary-001";
         var multipart = new MemoryStream();
@@ -89,17 +106,23 @@ public sealed class AttendanceEventParserTests
         WriteAscii(multipart, $"Content-Length: {metadata.Length}\r\n\r\n");
         multipart.Write(metadata);
         WriteAscii(multipart, "\r\n");
-        WriteAscii(multipart, $"--{boundary}\r\n");
-        WriteAscii(multipart, "Content-Disposition: form-data; name=\"picture\"; filename=\"picture.jpg\"\r\n");
-        WriteAscii(multipart, "Content-Type: image/jpeg\r\n");
-        WriteAscii(multipart, $"Content-Length: {picture.Length}\r\n\r\n");
-        multipart.Write(picture);
-        WriteAscii(multipart, "\r\n");
+        if (picture is not null)
+        {
+            WriteAscii(multipart, $"--{boundary}\r\n");
+            WriteAscii(multipart, "Content-Disposition: form-data; name=\"picture\"; filename=\"picture.jpg\"\r\n");
+            WriteAscii(multipart, "Content-Type: image/jpeg\r\n");
+            WriteAscii(multipart, $"Content-Length: {picture.Length}\r\n\r\n");
+            multipart.Write(picture);
+            WriteAscii(multipart, "\r\n");
+        }
         WriteAscii(multipart, $"--{boundary}--");
 
         var multipartBytes = multipart.ToArray();
         using var payload = new MemoryStream();
-        WriteAscii(payload, "HTTP/1.1 200 OK\r\n");
+        if (includeHttpStatusLine)
+        {
+            WriteAscii(payload, "HTTP/1.1 200 OK\r\n");
+        }
         WriteAscii(payload, $"Content-Type: multipart/form-data; boundary={boundary}\r\n");
         WriteAscii(payload, $"Content-Length: {multipartBytes.Length}\r\n\r\n");
         payload.Write(multipartBytes);

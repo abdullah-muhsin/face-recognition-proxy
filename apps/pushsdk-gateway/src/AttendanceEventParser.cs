@@ -146,8 +146,8 @@ public sealed partial class AttendanceEventParser
     private ParsedVendorEvent ParseBoundaryEvent(string terminalSerialNumber, string eventId, byte[] rawData)
     {
         var parts = ParseBoundary(rawData, eventId);
-        var metadataParts = parts.Where(part => part.ContentType is "application/json" or "application/xml").ToList();
-        var pictureParts = parts.Where(part => part.ContentType == "image/jpeg").ToList();
+        var metadataParts = parts.Where(part => HasMediaType(part.ContentType, "application/json") || HasMediaType(part.ContentType, "application/xml")).ToList();
+        var pictureParts = parts.Where(part => HasMediaType(part.ContentType, "image/jpeg")).ToList();
 
         if (metadataParts.Count != 1 || pictureParts.Count > 1 || parts.Count != metadataParts.Count + pictureParts.Count)
         {
@@ -161,7 +161,7 @@ public sealed partial class AttendanceEventParser
         }
 
         var metadata = metadataParts[0];
-        return metadata.ContentType switch
+        return MediaType(metadata.ContentType) switch
         {
             "application/json" => ParseBoundaryJson(terminalSerialNumber, eventId, metadata.Content, picture),
             "application/xml" => ParseBoundaryXml(terminalSerialNumber, eventId, metadata.Content, picture),
@@ -239,14 +239,26 @@ public sealed partial class AttendanceEventParser
             throw new ProtocolException(400, $"Event '{eventId}' boundaryData is missing the HTTP header terminator.");
         }
 
-        var header = Encoding.ASCII.GetString(rawData, 0, headerEnd);
-        var headerLines = header.Split("\r\n", StringSplitOptions.None);
-        if (headerLines.Length < 3 || headerLines[0] != "HTTP/1.1 200 OK")
+        var headerLines = Encoding.ASCII.GetString(rawData, 0, headerEnd).Split("\r\n", StringSplitOptions.None);
+        IEnumerable<string> contentHeaders;
+        if (headerLines.FirstOrDefault() == "HTTP/1.1 200 OK")
         {
-            throw new ProtocolException(400, $"Event '{eventId}' boundaryData must start with HTTP/1.1 200 OK.");
+            // Accepted for compatibility with the later vendor demo, which
+            // wraps the multipart body in a serialized HTTP response.
+            contentHeaders = headerLines.Skip(1);
+        }
+        else if (headerLines.FirstOrDefault()?.StartsWith("Content-Type:", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // DS-K1T342MFWX-E1 sends the documented direct multipart form:
+            // Content-Type and Content-Length headers, followed by its body.
+            contentHeaders = headerLines;
+        }
+        else
+        {
+            throw new ProtocolException(400, $"Event '{eventId}' boundaryData must start with Content-Type or HTTP/1.1 200 OK.");
         }
 
-        var headers = ParseHeaders(headerLines.Skip(1), eventId);
+        var headers = ParseHeaders(contentHeaders, eventId);
         if (!headers.TryGetValue("Content-Type", out var contentType)
             || !headers.TryGetValue("Content-Length", out var contentLengthText)
             || !int.TryParse(contentLengthText, NumberStyles.None, CultureInfo.InvariantCulture, out var contentLength)
@@ -360,6 +372,16 @@ public sealed partial class AttendanceEventParser
         }
 
         return boundary;
+    }
+
+    private static bool HasMediaType(string contentType, string expectedMediaType)
+    {
+        return string.Equals(MediaType(contentType), expectedMediaType, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string MediaType(string contentType)
+    {
+        return contentType.Split(';', 2, StringSplitOptions.TrimEntries)[0];
     }
 
     private void ValidateJpeg(byte[] picture, string eventId)
