@@ -92,6 +92,23 @@ public sealed class AttendanceEventParserTests
     }
 
     [Fact]
+    public void ParsesBoundaryMetadataWhenTheTerminalUsesAnUnhelpfulTextMediaType()
+    {
+        using var environment = new TestEnvironment();
+        var parser = new AttendanceEventParser(environment.CreateOptions());
+        var rawBoundary = BuildBoundaryPayload(
+            TestProtocol.AccessEventJson("2006"),
+            null,
+            partContentType: "application/octet-stream");
+        var body = TestProtocol.BuildEventEnvelope("event-inferred-boundary-1", "boundaryData", rawBoundary);
+
+        var parsed = Assert.Single(parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
+        var delivery = Assert.IsType<DeliveryEvent>(parsed.Delivery);
+
+        Assert.Equal("2006", delivery.Event.EmployeeNumber);
+    }
+
+    [Fact]
     public void AcknowledgesAnOpaqueTerminalBoundaryEntry()
     {
         using var environment = new TestEnvironment();
@@ -175,7 +192,8 @@ public sealed class AttendanceEventParserTests
         bool includeContentLengths = true,
         int initialBlankLines = 0,
         bool includePartHeaders = true,
-        bool includeTerminalDelimiter = true)
+        bool includeTerminalDelimiter = true,
+        string partContentType = "application/json")
     {
         const string boundary = "hikvision-boundary-001";
         var multipart = new MemoryStream();
@@ -183,7 +201,7 @@ public sealed class AttendanceEventParserTests
         if (includePartHeaders)
         {
             WriteAscii(multipart, "Content-Disposition: form-data; name=\"metadata\"; filename=\"event.json\"\r\n");
-            WriteAscii(multipart, "Content-Type: application/json\r\n");
+            WriteAscii(multipart, $"Content-Type: {partContentType}\r\n");
             if (includeContentLengths)
             {
                 WriteAscii(multipart, $"Content-Length: {metadata.Length}\r\n");

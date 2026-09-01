@@ -251,6 +251,15 @@ public sealed partial class PushProtocolHandler
             async (terminal, body, _) =>
             {
                 var parsedEvents = _eventParser.ParseBatch(terminal.SerialNumber, body);
+                foreach (var parsedEvent in parsedEvents.Where(parsedEvent => parsedEvent.Diagnostic is not null))
+                {
+                    _logger.LogInformation(
+                        "Acknowledged non-attendance Push SDK event {VendorEventId} from terminal {TerminalSerialNumber}: {Diagnostic}.",
+                        parsedEvent.VendorEventId,
+                        terminal.SerialNumber,
+                        parsedEvent.Diagnostic);
+                }
+
                 try
                 {
                     await _database.PersistEventsAsync(terminal.SerialNumber, parsedEvents, DateTimeOffset.UtcNow, cancellationToken);

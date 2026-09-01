@@ -152,7 +152,11 @@ public sealed partial class AttendanceEventParser
     private ParsedVendorEvent ParseBoundaryEvent(string terminalSerialNumber, string eventId, byte[] rawData)
     {
         var parts = ParseBoundary(rawData, eventId);
-        var metadataParts = parts.Where(part => HasMediaType(part.ContentType, "application/json") || HasMediaType(part.ContentType, "application/xml")).ToList();
+        var metadataParts = parts
+            .Select(TryNormalizeMetadataPart)
+            .Where(part => part is not null)
+            .Select(part => part!)
+            .ToList();
         var pictureParts = parts.Where(part => HasMediaType(part.ContentType, "image/jpeg")).ToList();
 
         // The terminal also sends opaque boundaryData entries (for example,
@@ -161,7 +165,7 @@ public sealed partial class AttendanceEventParser
         // and allow the device queue to advance.
         if (metadataParts.Count == 0)
         {
-            return ParsedVendorEvent.Ignored(eventId, "boundaryData");
+            return ParsedVendorEvent.Ignored(eventId, "boundaryData", DescribeBoundaryParts(parts));
         }
 
         if (metadataParts.Count != 1 || pictureParts.Count > 1 || parts.Count != metadataParts.Count + pictureParts.Count)
@@ -182,6 +186,51 @@ public sealed partial class AttendanceEventParser
             "application/xml" => ParseBoundaryXml(terminalSerialNumber, eventId, metadata.Content, picture),
             _ => throw new InvalidOperationException("Boundary metadata content type was validated before dispatch."),
         };
+    }
+
+    private static BoundaryPart? TryNormalizeMetadataPart(BoundaryPart part)
+    {
+        if (HasMediaType(part.ContentType, "application/json") || HasMediaType(part.ContentType, "application/xml"))
+        {
+            return part;
+        }
+
+        return TryInferTextMetadataMediaType(part.Content, out var inferredMediaType)
+            ? part with { ContentType = inferredMediaType }
+            : null;
+    }
+
+    private static bool TryInferTextMetadataMediaType(byte[] content, out string mediaType)
+    {
+        var position = content.AsSpan();
+        if (position.StartsWith("\uFEFF"u8))
+        {
+            position = position[3..];
+        }
+
+        while (!position.IsEmpty && position[0] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n')
+        {
+            position = position[1..];
+        }
+
+        mediaType = position.IsEmpty
+            ? string.Empty
+            : position[0] == (byte)'{'
+                ? "application/json"
+                : position[0] == (byte)'<'
+                    ? "application/xml"
+                    : string.Empty;
+        return mediaType.Length != 0;
+    }
+
+    private static string DescribeBoundaryParts(IReadOnlyList<BoundaryPart> parts)
+    {
+        if (parts.Count == 0)
+        {
+            return "multipart payload contained no complete parts";
+        }
+
+        return "multipart parts: " + string.Join(", ", parts.Select(part => $"{MediaType(part.ContentType)} ({part.Content.Length} bytes)"));
     }
 
     private ParsedVendorEvent ParseBoundaryJson(string terminalSerialNumber, string eventId, byte[] metadata, byte[]? picture)
@@ -698,9 +747,10 @@ public sealed record ParsedVendorEvent(
     string VendorEventId,
     string DataFormat,
     string RawPayloadSha256,
-    DeliveryEvent? Delivery)
+    DeliveryEvent? Delivery,
+    string? Diagnostic = null)
 {
-    public static ParsedVendorEvent Ignored(string vendorEventId, string dataFormat) => new(vendorEventId, dataFormat, string.Empty, null);
+    public static ParsedVendorEvent Ignored(string vendorEventId, string dataFormat, string? diagnostic = null) => new(vendorEventId, dataFormat, string.Empty, null, diagnostic);
 
     public static ParsedVendorEvent ForDelivery(string vendorEventId, string dataFormat, CanonicalAttendanceEvent attendanceEvent, byte[]? picture) =>
         new(vendorEventId, dataFormat, string.Empty, new DeliveryEvent(attendanceEvent, picture));
