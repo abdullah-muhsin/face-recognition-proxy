@@ -1,8 +1,8 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "local/attendance-receiver",
+    "name": "local/attendance-receiver-esp32",
     "type": "project",
-    "description": "Attendance receiver Laravel application.",
+    "description": "ESP32 and local ISAPI attendance demonstration receiver.",
     "keywords": ["laravel", "framework"],
     "license": "MIT",
     "require": {

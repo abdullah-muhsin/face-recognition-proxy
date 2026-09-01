@@ -17,15 +17,12 @@ class AttendanceRecordsController extends Controller
         $search = trim((string) $request->query('search', ''));
 
         $records = AttendanceRecord::query()
-            ->with('terminal')
             ->when($search !== '', function ($query) use ($search): void {
                 $query->where(function ($query) use ($search): void {
                     $query->where('employee_number', 'like', "%{$search}%")
                         ->orWhere('employee_name', 'like', "%{$search}%")
                         ->orWhere('terminal_serial_number', 'like', "%{$search}%")
                         ->orWhere('bridge_identifier', 'like', "%{$search}%")
-                        ->orWhere('vendor_event_id', 'like', "%{$search}%")
-                        ->orWhere('ingestion_source', 'like', "%{$search}%")
                         ->orWhere('legacy_event_serial_number', $search);
                 });
             })

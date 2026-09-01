@@ -5,6 +5,7 @@ embedded/**/firmware/**/main/local_defaults.h
 # Local source/archive bundles; never commit these large generated files.
 /face-recognition-proxy.zip
 /network-service-codebase.zip
+/third_party/hikvision/
 
 docs/**/credentials.local.md
 docs/**/.env.local

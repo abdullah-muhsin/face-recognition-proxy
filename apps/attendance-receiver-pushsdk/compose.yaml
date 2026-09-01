@@ -1,0 +1,30 @@
+services:
+  app:
+    build:
+      context: .
+    image: attendance-receiver-pushsdk:local
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/') === false ? 1 : 0);"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    env_file:
+      - .env.production
+    ports:
+      - "${ATTENDANCE_RECEIVER_BIND_ADDRESS:-127.0.0.1}:${ATTENDANCE_RECEIVER_HOST_PORT:-8001}:80"
+    volumes:
+      - attendance_receiver_pushsdk_data:/var/lib/attendance-receiver
+      - attendance_receiver_pushsdk_storage:/var/www/html/storage
+    networks:
+      - pushsdk_gateway
+
+volumes:
+  attendance_receiver_pushsdk_data:
+  attendance_receiver_pushsdk_storage:
+
+networks:
+  pushsdk_gateway:
+    name: attendance_pushsdk_internal
+    internal: true

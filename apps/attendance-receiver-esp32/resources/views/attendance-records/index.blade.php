@@ -4,14 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="refresh" content="20">
-    <title>Attendance Records</title>
+    <title>ESP32 Attendance Demo</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body>
     <div class="shell">
         <header class="page-header">
             <div>
-                <h1>Attendance Records</h1>
+                <h1>ESP32 Attendance Demo</h1>
             </div>
             <div class="header-actions">
                 <a class="button secondary" href="{{ route('attendance-records.index') }}">Refresh</a>
@@ -56,7 +56,7 @@
             </div>
             <div class="stat">
                 <span>Latest</span>
-                <strong>{{ $latestRecord?->vendor_event_id ?? $latestRecord?->legacy_event_serial_number ?? '-' }}</strong>
+                <strong>{{ $latestRecord?->legacy_event_serial_number ?? '-' }}</strong>
                 <small>{{ $latestRecord?->occurred_at?->format('M j H:i') ?? 'No events' }}</small>
             </div>
         </section>
@@ -67,7 +67,7 @@
                     <input
                         name="search"
                         value="{{ $search }}"
-                        placeholder="Search employee, terminal, source, or event"
+                        placeholder="Search employee, terminal, bridge, or event"
                     >
                     <button type="submit">Search</button>
                     @if ($search !== '')
@@ -87,7 +87,6 @@
                             <th>Time</th>
                             <th>Status</th>
                             <th>Terminal</th>
-                            <th>Source</th>
                             <th>Payload</th>
                         </tr>
                     </thead>
@@ -100,7 +99,7 @@
                                             <img
                                                 class="record-picture"
                                                 src="{{ route('attendance-records.picture', $record) }}"
-                                                alt="Attendance record #{{ $record->vendor_event_id ?? $record->legacy_event_serial_number }} picture"
+                                                alt="Attendance record #{{ $record->legacy_event_serial_number }} picture"
                                             >
                                         </a>
                                         <span class="tiny">{{ number_format($record->picture_bytes ?? 0) }} bytes</span>
@@ -115,8 +114,8 @@
                                     <span class="line-muted">{{ $record->employee_number ?: '-' }}</span>
                                 </td>
                                 <td>
-                                    <code>#{{ $record->vendor_event_id ?? $record->legacy_event_serial_number ?? '-' }}</code><br>
-                                    <span class="line-muted">{{ $record->vendor_event_id ? 'Attendance event' : "major {$record->legacy_event_major} / minor {$record->legacy_event_minor}" }}</span>
+                                    <code>#{{ $record->legacy_event_serial_number ?? '-' }}</code><br>
+                                    <span class="line-muted">major {{ $record->legacy_event_major ?? '-' }} / minor {{ $record->legacy_event_minor ?? '-' }}</span>
                                 </td>
                                 <td>
                                     {{ $record->occurred_at?->format('Y-m-d H:i:s P') ?? '-' }}<br>
@@ -128,13 +127,9 @@
                                     <span class="line-muted">{{ $record->verification_method ?: '-' }}</span>
                                 </td>
                                 <td>
-                                    <strong>{{ $record->terminal?->display_name ?: $record->terminal_name ?: $record->terminal_model ?: '-' }}</strong>
+                                    <strong>{{ $record->terminal_name ?: $record->terminal_model ?: '-' }}</strong>
                                     <span class="line-muted">{{ $record->terminal_model ?: '-' }}</span>
                                     <code>{{ $record->terminal_serial_number }}</code>
-                                </td>
-                                <td>
-                                    <code>{{ $record->ingestion_source }}</code><br>
-                                    <span class="line-muted">{{ $record->bridge_firmware ?: '-' }}</span>
                                 </td>
                                 <td>
                                     <details>
@@ -145,7 +140,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td class="empty" colspan="8">No attendance records received yet.</td>
+                                <td class="empty" colspan="7">No attendance records received yet.</td>
                             </tr>
                         @endforelse
                     </tbody>

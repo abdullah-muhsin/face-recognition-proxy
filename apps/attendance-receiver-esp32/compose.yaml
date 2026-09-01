@@ -2,7 +2,7 @@ services:
   app:
     build:
       context: .
-    image: attendance-receiver:local
+    image: attendance-receiver-esp32:local
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/') === false ? 1 : 0);"]
@@ -15,9 +15,9 @@ services:
     ports:
       - "${ATTENDANCE_RECEIVER_BIND_ADDRESS:-127.0.0.1}:${ATTENDANCE_RECEIVER_HOST_PORT:-8001}:80"
     volumes:
-      - attendance_receiver_data:/var/lib/attendance-receiver
-      - attendance_receiver_storage:/var/www/html/storage
+      - attendance_receiver_esp32_data:/var/lib/attendance-receiver
+      - attendance_receiver_esp32_storage:/var/www/html/storage
 
 volumes:
-  attendance_receiver_data:
-  attendance_receiver_storage:
+  attendance_receiver_esp32_data:
+  attendance_receiver_esp32_storage:

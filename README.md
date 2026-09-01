@@ -1,45 +1,16 @@
-# Face Recognition Workspace
+# Face Recognition Integration Demos
 
-This repository is organized as a multi-part workspace for the face recognition terminal integration.
+This workspace contains two independent Laravel demonstrations for the same Hikvision attendance-terminal outcome. They intentionally do not share an application or database.
 
-## Structure
+- `apps/attendance-receiver-esp32` — an ESP32 bridge polls the terminal locally through ISAPI and sends attendance records to Laravel.
+- `apps/attendance-receiver-pushsdk` — a dedicated Push SDK gateway receives the terminal's outbound Push SDK connection and sends canonical attendance records to Laravel privately.
 
-- `apps/attendance-receiver` - Docker-deployed Laravel application that receives and displays attendance events.
-- `embedded/esp32-wroom-32` - ESP32-WROOM-32 development firmware and helper scripts.
-- `docs/devices/hikvision-ds-k1a340fwx` - Hikvision DS-K1A340FWX terminal documentation and API notes.
+The ESP32 firmware remains under `embedded/esp32-wroom-32`. Terminal research and tested ISAPI notes are under `docs/devices/`.
 
-## ESP32 Development
+## Choose one demo
 
-The firmware tools are installed in user space under `/home/magnet/esp/esp-idf-v6.0.2` with Espressif's tool cache in `/home/magnet/.espressif`.
+Use the ESP32 receiver when demonstrating a simple local-network bridge. Use the Push SDK receiver when demonstrating outbound, stateful device integration without exposing the terminal's management interface.
 
-```bash
-cd embedded/esp32-wroom-32
-./scripts/esp32-build.sh
-ESPPORT=/dev/ttyUSB0 ./scripts/esp32-flash.sh
-./scripts/esp32-monitor.sh firmware/attendance-bridge /dev/ttyUSB0
-```
+Each project has its own README, SQLite storage, Docker image, environment file, Nginx template, and release target. Do not point both demos at the same runtime directory or database.
 
-The default ESP32 firmware is `firmware/attendance-bridge`. It starts an open
-setup AP, then you configure its attendance LAN, Hikvision terminal, and
-receiver URL in the setup UI. It persists that configuration in NVS. A private
-`local_defaults.h` can supply build-time defaults; copy the tracked example and
-never commit the resulting file.
-
-## Laravel Application
-
-The Laravel application is under `apps/attendance-receiver` and is deployed
-with Docker Compose. Its production data is SQLite plus uploaded pictures in
-named Docker volumes. No host PHP-FPM, nginx, MariaDB, or Rocky-specific deploy
-scripts are required.
-
-```bash
-cd apps/attendance-receiver
-composer run setup
-php artisan test
-```
-
-For deployment instructions and the receiver API, see
-[`apps/attendance-receiver/README.md`](apps/attendance-receiver/README.md).
-
-Rocky Linux remains a valid ESP32 development host; its ESP-IDF prerequisites
-are documented with the firmware.
+The vendor Push SDK archives in `third_party/hikvision` are local reference material only. They include executables, databases, and certificate files and must not be committed or deployed as application dependencies.

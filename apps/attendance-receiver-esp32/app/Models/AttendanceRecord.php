@@ -3,15 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AttendanceRecord extends Model
 {
     protected $fillable = [
         'source_schema',
         'bridge_firmware',
-        'ingestion_source',
-        'terminal_id',
         'bridge_identifier',
         'legacy_device_base_url',
         'legacy_device_username',
@@ -20,7 +17,6 @@ class AttendanceRecord extends Model
         'terminal_serial_number',
         'terminal_mac_address',
         'legacy_event_serial_number',
-        'vendor_event_id',
         'occurred_at',
         'received_at',
         'legacy_event_major',
@@ -30,7 +26,6 @@ class AttendanceRecord extends Model
         'verification_method',
         'attendance_status',
         'attendance_status_value',
-        'source_payload_hash',
         'picture_expected',
         'picture_path',
         'picture_content_type',
@@ -54,10 +49,5 @@ class AttendanceRecord extends Model
             'legacy_raw_event' => 'array',
             'source_payload' => 'array',
         ];
-    }
-
-    public function terminal(): BelongsTo
-    {
-        return $this->belongsTo(AttendanceTerminal::class, 'terminal_id');
     }
 }

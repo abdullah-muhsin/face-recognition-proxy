@@ -1,6 +1,6 @@
 {
     "$schema": "https://www.schemastore.org/package.json",
-    "name": "attendance-receiver",
+    "name": "attendance-receiver-esp32",
     "private": true,
     "type": "module",
     "scripts": {

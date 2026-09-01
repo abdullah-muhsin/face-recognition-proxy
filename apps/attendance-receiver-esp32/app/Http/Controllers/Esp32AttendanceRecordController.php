@@ -64,7 +64,6 @@ class Esp32AttendanceRecordController extends Controller
         $record->fill([
             'source_schema' => $validated['schema'],
             'bridge_firmware' => $validated['firmware'] ?? null,
-            'ingestion_source' => 'esp32',
             'received_at' => $record->received_at ?? now(),
             'legacy_device_base_url' => $device['base_url'],
             'legacy_device_username' => $device['username'] ?? null,
@@ -104,8 +103,6 @@ class Esp32AttendanceRecordController extends Controller
     public function storePicture(Request $request, AttendanceRecord $attendanceRecord, AttendanceRecordPictureStorage $pictureStorage): JsonResponse
     {
         $this->authorizeBridge($request);
-        abort_unless($attendanceRecord->ingestion_source === 'esp32', 404);
-
         $picture = $pictureStorage->store($attendanceRecord, $request);
 
         return response()->json([

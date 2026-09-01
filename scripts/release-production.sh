@@ -3,19 +3,20 @@ set -Eeuo pipefail
 
 usage() {
     cat <<'USAGE'
-Release Attendance Receiver to the Aruvo production VPS.
+Release a selected attendance receiver demo to the Aruvo production VPS.
 
 Usage:
-  scripts/release-production.sh --project-dir PATH [options]
+  scripts/release-production.sh --receiver esp32|pushsdk --project-dir PATH [options]
 
 Required:
+  --receiver NAME         `esp32` or `pushsdk`.
   --project-dir PATH      Absolute path for this repository's VPS checkout.
 
 Options:
   --host SSH_TARGET       SSH target (default: vps-aruvo).
   --deploy-user USER      VPS user that owns rootless Docker (default: abdullah).
   --runtime-dir PATH      Existing data/config directory
-                          (default: /home/abdullah/attendance-receiver-runtime).
+                          (default: receiver-specific directory under the deploy user home).
   --branch NAME           Git branch to release (default: main).
   --bootstrap             Permit the one-time clone when --project-dir does not
                           yet exist. The existing runtime data is retained.
@@ -28,11 +29,11 @@ Options:
 
 Environment equivalents:
   ARUVO_SSH_TARGET, ARUVO_DEPLOY_USER, ARUVO_PROJECT_DIR,
-  ARUVO_RUNTIME_DIR, ARUVO_RELEASE_BRANCH
+  ARUVO_RUNTIME_DIR, ARUVO_RELEASE_BRANCH, ARUVO_RECEIVER
 
-The script builds a new image before stopping the live attendance container.
+The script builds a new image before stopping the selected live container.
 It validates and reuses the existing data and storage bind mounts, then starts
-the replacement on 127.0.0.1:8001. It verifies the application response from
+the replacement on its receiver-specific loopback port. It verifies the application response from
 inside the container, never touches unrelated containers, and retains the old
 container as a stopped rollback candidate.
 USAGE
@@ -41,8 +42,9 @@ USAGE
 ssh_target="${ARUVO_SSH_TARGET:-vps-aruvo}"
 deploy_user="${ARUVO_DEPLOY_USER:-abdullah}"
 project_dir="${ARUVO_PROJECT_DIR:-}"
-runtime_dir="${ARUVO_RUNTIME_DIR:-/home/abdullah/attendance-receiver-runtime}"
+runtime_dir="${ARUVO_RUNTIME_DIR:-}"
 branch="${ARUVO_RELEASE_BRANCH:-main}"
+receiver="${ARUVO_RECEIVER:-}"
 bootstrap=false
 fresh_database=false
 dry_run=false
@@ -56,6 +58,11 @@ require_value() {
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --receiver)
+            require_value "$@"
+            receiver="$2"
+            shift 2
+            ;;
         --host)
             require_value "$@"
             ssh_target="$2"
@@ -105,10 +112,24 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+case "$receiver" in
+    esp32|pushsdk)
+        ;;
+    *)
+        echo "--receiver must be either 'esp32' or 'pushsdk'." >&2
+        usage >&2
+        exit 2
+        ;;
+esac
+
 if [ -z "$project_dir" ]; then
     echo "--project-dir is required." >&2
     usage >&2
     exit 2
+fi
+
+if [ -z "$runtime_dir" ]; then
+    runtime_dir="/home/$deploy_user/attendance-receiver-$receiver-runtime"
 fi
 
 if [[ "$project_dir" != /* ]] || [[ "$runtime_dir" != /* ]]; then
@@ -122,7 +143,7 @@ is_safe_remote_argument() {
     [[ "$1" =~ ^[A-Za-z0-9._/@:+,=-]+$ ]]
 }
 
-for value in "$deploy_user" "$project_dir" "$runtime_dir" "$branch"; do
+for value in "$deploy_user" "$project_dir" "$runtime_dir" "$branch" "$receiver"; do
     if ! is_safe_remote_argument "$value"; then
         echo "Unsupported character in a remote argument: $value" >&2
         exit 2
@@ -136,10 +157,10 @@ origin_url="$(git remote get-url origin)"
 is_safe_remote_argument "$origin_url" \
     || { echo "The origin URL contains unsupported characters." >&2; exit 2; }
 
-echo "Releasing '$branch' to '$ssh_target' as '$deploy_user'"
+echo "Releasing '$receiver' receiver from '$branch' to '$ssh_target' as '$deploy_user'"
 
 ssh -- "$ssh_target" bash -s -- \
-    "$deploy_user" "$project_dir" "$runtime_dir" "$branch" \
+    "$deploy_user" "$project_dir" "$runtime_dir" "$branch" "$receiver" \
     "$origin_url" "$bootstrap" "$fresh_database" "$dry_run" <<'REMOTE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -148,19 +169,39 @@ deploy_user="$1"
 project_dir="$2"
 runtime_dir="$3"
 branch="$4"
-origin_url="$5"
-bootstrap="$6"
-fresh_database="$7"
-dry_run="$8"
-app_dir="$project_dir/apps/attendance-receiver"
+receiver="$5"
+origin_url="$6"
+bootstrap="$7"
+fresh_database="$8"
+dry_run="$9"
+
+case "$receiver" in
+    esp32)
+        app_dir="$project_dir/apps/attendance-receiver-esp32"
+        container_name="attendance_receiver_esp32"
+        host_port="8001"
+        image_repository="attendance-receiver-esp32"
+        network_name=""
+        ;;
+    pushsdk)
+        app_dir="$project_dir/apps/attendance-receiver-pushsdk"
+        container_name="attendance_receiver_pushsdk"
+        host_port="8002"
+        image_repository="attendance-receiver-pushsdk"
+        network_name="attendance_pushsdk_internal"
+        ;;
+    *)
+        echo "release-production: unsupported receiver '$receiver'" >&2
+        exit 2
+        ;;
+esac
+
 runtime_env="$runtime_dir/runtime.env"
 data_dir="$runtime_dir/data"
 storage_dir="$runtime_dir/storage"
 database_file="$data_dir/database.sqlite"
 picture_directory="$storage_dir/app/private/attendance-record-pictures"
-container_name="attendance_receiver"
 bind_address="127.0.0.1"
-host_port="8001"
 backup_dir=""
 fresh_database_started=false
 
@@ -297,8 +338,16 @@ origin_commit="$(as_deploy git -C "$project_dir" rev-parse "origin/$branch")"
 [ "$deployed_commit" = "$origin_commit" ] \
     || fail "VPS checkout is not exactly at origin/$branch after fast-forward"
 
-image_tag="attendance-receiver:release-${deployed_commit:0:12}"
+image_tag="$image_repository:release-${deployed_commit:0:12}"
 as_deploy docker build --tag "$image_tag" "$app_dir"
+
+docker_network_args=()
+if [ -n "$network_name" ]; then
+    if ! as_deploy docker network inspect "$network_name" >/dev/null 2>&1; then
+        as_deploy docker network create --internal "$network_name" >/dev/null
+    fi
+    docker_network_args=(--network "$network_name")
+fi
 
 previous_container=""
 new_container_started=false
@@ -324,7 +373,7 @@ if [ -n "$existing_id" ]; then
 fi
 
 if [ "$fresh_database" = true ]; then
-    backup_dir="$runtime_dir/backups/attendance-receiver-$(date -u +%Y%m%dT%H%M%SZ)"
+    backup_dir="$runtime_dir/backups/attendance-receiver-$receiver-$(date -u +%Y%m%dT%H%M%SZ)"
     as_deploy install -d -m 700 "$backup_dir"
     as_deploy docker run --rm \
         --volume "$data_dir:/var/lib/attendance-receiver:ro" \
@@ -363,6 +412,7 @@ as_deploy docker run --detach \
     --restart unless-stopped \
     --env-file "$runtime_env" \
     --publish "$bind_address:$host_port:80" \
+    "${docker_network_args[@]}" \
     --volume "$data_dir:/var/lib/attendance-receiver" \
     --volume "$storage_dir:/var/www/html/storage" \
     "$image_tag" >/dev/null
@@ -373,7 +423,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     if as_deploy docker exec "$container_name" php -r \
         'exit(@file_get_contents("http://127.0.0.1/") === false ? 1 : 0);'; then
         trap - ERR
-        echo "Release complete at $deployed_commit; attendance receiver is responding."
+        echo "Release complete at $deployed_commit; $receiver attendance receiver is responding."
         if [ -n "$previous_container" ]; then
             echo "Previous container retained for rollback: $previous_container"
         fi
