@@ -41,12 +41,16 @@ nor broadcast to browsers.
 
 This gateway intentionally accepts only the documented protocol forms:
 
-- The exact `/iot/{pushSdkSerial}/.../PUSH/{action}` route and `POST` with
-  `Content-Type: application/json`.
-- `AuthInfo` announces the terminal's configured security version (3 or 4).
-- `Login` and every authenticated action use negotiated AES-CBC encryption
-  with exactly `security`, `iv`, and `random` query parameters.
-- Each authenticated request must present the server-issued challenge header.
+- The exact `/iot/{pushSdkSerial}/.../PUSH/{action}` route and `POST` method.
+- `AuthInfo` has two mutually exclusive documented modes: an empty body creates
+  a JSON/plaintext session, while an `application/json` negotiation body that
+  offers the configured security version creates an encrypted session.
+- A plaintext session permits no query parameters and carries JSON request and
+  response bodies. An encrypted session requires exactly `security`, `iv`, and
+  `random`; encrypted payloads use `application/octet-stream`.
+- `Login` validates the configured username and PBKDF2 digest. Subsequent
+  actions validate `My-Custom-Auth`, calculated from the previous
+  server-issued `My-Custom-Challenge`.
 - Events use an exact JSON envelope, base64 data, unique vendor UUIDs, and one
   of `jsonData`, `xmlData`, `boundaryData`, or empty `noData`.
 - `boundaryData` must be the documented direct `multipart/form-data` form with
@@ -75,14 +79,18 @@ because a host-loopback request reaches the container through that bridge.
 
 ## Production release
 
-First create these protected VPS files, owned by the deployment account and
-mode `0600`:
+First create these VPS files, owned by the deployment account:
 
 ```text
 /home/abdullah/pushsdk-gateway-runtime/gateway.env
 /home/abdullah/pushsdk-gateway-runtime/terminal.env
 /home/abdullah/pushsdk-gateway-runtime/terminals.json
 ```
+
+`gateway.env` and `terminal.env` contain credentials and must be mode `0600`.
+`terminals.json` contains only terminal identifiers, the gateway username, and
+the name of the password environment variable; it must be mode `0644` because
+the non-root gateway process reads its read-only bind mount.
 
 Use `deploy/production/gateway.env.example`,
 `deploy/production/terminal.env.example`, and

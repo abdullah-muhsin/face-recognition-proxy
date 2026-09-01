@@ -28,7 +28,7 @@ services:
       WEB_DIR: /app/web
       MIGRATIONS_DIR: /app/migrations
     volumes:
-      - ${TERMINALS_FILE:?set TERMINALS_FILE to a protected terminal configuration}:/run/gateway/terminals.json:ro
+      - ${TERMINALS_FILE:?set TERMINALS_FILE to the terminal mapping}:/run/gateway/terminals.json:ro
     ports:
       - "127.0.0.1:18080:8080"
     depends_on:

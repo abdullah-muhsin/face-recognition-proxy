@@ -48,11 +48,6 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		s.respondError(writer, http.StatusNotFound, "terminal is not registered")
 		return
 	}
-	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-	if err != nil || contentType != "application/json" {
-		s.respondError(writer, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
-		return
-	}
 	request.Body = http.MaxBytesReader(writer, request.Body, maxRequestBytes)
 	body, err := readAll(request.Body)
 	if err != nil {
@@ -64,7 +59,16 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	var params *EncryptionParameters
 	switch action {
 	case "AuthInfo":
-		result, err = s.authInfo(request.Context(), terminal, body)
+		if request.URL.RawQuery != "" {
+			err = badRequest("AuthInfo does not permit query parameters")
+		} else if len(body) > 0 {
+			err = requireContentType(request, "application/json")
+		} else if request.Header.Get("Content-Type") != "" {
+			err = requireContentType(request, "application/json")
+		}
+		if err == nil {
+			result, err = s.authInfo(request.Context(), terminal, body)
+		}
 	case "Login":
 		result, params, err = s.login(request.Context(), terminal, request, body)
 	case "CommandRequest", "CommandResult", "Event", "Logout":
@@ -117,24 +121,11 @@ type authInfoRequest struct {
 }
 
 func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body []byte) (response, error) {
-	var payload authInfoRequest
-	if err := decodeExactJSON(body, &payload); err != nil {
-		return response{}, badRequest("AuthInfo body: %v", err)
+	encrypted, err := authInfoEncryption(terminal, body)
+	if err != nil {
+		return response{}, err
 	}
-	if len(payload.Data.SecurityVersions) == 0 {
-		return response{}, badRequest("AuthInfo must declare securityVersion")
-	}
-	found := false
-	for _, version := range payload.Data.SecurityVersions {
-		if version == terminal.Security {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return response{}, unprocessable("terminal does not offer configured security version")
-	}
-	session, replacedAuthenticated, err := s.sessions.Start(terminal)
+	session, replacedAuthenticated, err := s.sessions.Start(terminal, encrypted)
 	if err != nil {
 		return response{}, fmt.Errorf("create AuthInfo session: %w", err)
 	}
@@ -144,8 +135,36 @@ func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body [
 	if replacedAuthenticated {
 		s.metrics.SessionsActive.Dec()
 	}
-	s.hub.Publish(monitor.Event{Kind: "pushsdk.auth_info", Terminal: terminal.SerialNumber, Message: "terminal started authentication", Fields: map[string]any{"securityVersion": terminal.Security}})
-	return success(map[string]any{"challenge": session.LoginChallenge, "salt": session.Salt, "iterations": session.Iterations, "isDataEncrypt": true, "securityVersion": []int{terminal.Security}}), nil
+	s.hub.Publish(monitor.Event{Kind: "pushsdk.auth_info", Terminal: terminal.SerialNumber, Message: "terminal started authentication", Fields: map[string]any{"encrypted": encrypted, "securityVersion": terminal.Security}})
+	return success(map[string]any{"challenge": session.LoginChallenge, "salt": session.Salt, "iterations": session.Iterations, "isDataEncrypt": encrypted, "securityVersion": []int{3, 4}}), nil
+}
+
+// authInfoEncryption represents the two mutually exclusive protocol modes.
+// A zero-length AuthInfo body is the documented no-negotiation variant: every
+// following payload in that session is JSON without encryption parameters. A
+// non-empty body must be the documented negotiation object and must offer the
+// configured security version; that session then requires encryption for every
+// JSON payload after AuthInfo.
+func authInfoEncryption(terminal config.Terminal, body []byte) (bool, error) {
+	if len(body) == 0 {
+		return false, nil
+	}
+	var payload authInfoRequest
+	if err := decodeExactJSON(body, &payload); err != nil {
+		return false, badRequest("AuthInfo body: %v", err)
+	}
+	if len(payload.Data.SecurityVersions) == 0 {
+		return false, badRequest("AuthInfo must declare securityVersion when it has a body")
+	}
+	for _, version := range payload.Data.SecurityVersions {
+		if version != 3 && version != 4 {
+			return false, badRequest("AuthInfo securityVersion may contain only 3 or 4")
+		}
+		if version == terminal.Security {
+			return true, nil
+		}
+	}
+	return false, unprocessable("terminal does not offer configured security version")
 }
 
 type loginRequest struct {
@@ -155,7 +174,7 @@ type loginRequest struct {
 	} `json:"data"`
 }
 
-func (s *Service) login(ctx context.Context, terminal config.Terminal, request *http.Request, encryptedBody []byte) (response, *EncryptionParameters, error) {
+func (s *Service) login(ctx context.Context, terminal config.Terminal, request *http.Request, requestBody []byte) (response, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
 		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login requires AuthInfo"}
@@ -166,13 +185,9 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		s.sessions.Remove(terminal.PushSDKSerial)
 		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "AuthInfo challenge has expired"}
 	}
-	params, err := encryptionFromRequest(request, terminal.Security)
+	body, params, err := payloadForSession(request, terminal, session, "Login", requestBody, true)
 	if err != nil {
-		return response{}, nil, badRequest("Login encryption parameters: %v", err)
-	}
-	body, err := decrypt(terminal, session.Salt, session.Iterations, params, encryptedBody)
-	if err != nil {
-		return response{}, nil, badRequest("Login decrypt: %v", err)
+		return response{}, nil, err
 	}
 	var payload loginRequest
 	if err := decodeExactJSON(body, &payload); err != nil {
@@ -180,9 +195,6 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	}
 	if payload.Data.Username != terminal.Username || !constantTimeEqual(payload.Data.LoginPassword, expectedLoginPassword(terminal, session.Salt, session.LoginChallenge, session.Iterations)) {
 		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login credentials are invalid"}
-	}
-	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.LoginChallenge)) {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login authentication header is invalid"}
 	}
 	next, err := session.IssueNextChallenge()
 	if err != nil {
@@ -193,14 +205,14 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		return response{}, nil, err
 	}
 	s.metrics.SessionsActive.Inc()
-	s.hub.Publish(monitor.Event{Kind: "pushsdk.login", Terminal: terminal.SerialNumber, Message: "terminal authenticated", Fields: map[string]any{"securityVersion": terminal.Security}})
+	s.hub.Publish(monitor.Event{Kind: "pushsdk.login", Terminal: terminal.SerialNumber, Message: "terminal authenticated", Fields: map[string]any{"encrypted": session.Encrypted, "securityVersion": terminal.Security}})
 	result := success(map[string]any{"commandInterval": terminal.CommandSeconds, "errorDelay": terminal.ErrorDelay})
 	result.Challenge = next
 	result.session = session
-	return result, &params, nil
+	return result, params, nil
 }
 
-func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, action string, request *http.Request, encryptedBody []byte) (response, *EncryptionParameters, error) {
+func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, action string, request *http.Request, requestBody []byte) (response, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
 		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
@@ -210,16 +222,13 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 	if !session.Authenticated {
 		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
 	}
-	if !constantTimeEqual(request.Header.Get("My-Custom-Challenge"), session.NextChallenge) {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "request challenge is invalid"}
+	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.NextChallenge)) {
+		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "request authentication header is invalid"}
 	}
-	params, err := encryptionFromRequest(request, terminal.Security)
+	requiresBody := action == "CommandResult" || action == "Event"
+	body, params, err := payloadForSession(request, terminal, session, action, requestBody, requiresBody)
 	if err != nil {
-		return response{}, nil, badRequest("%s encryption parameters: %v", action, err)
-	}
-	body, err := decrypt(terminal, session.Salt, session.Iterations, params, encryptedBody)
-	if err != nil {
-		return response{}, nil, badRequest("%s decrypt: %v", action, err)
+		return response{}, nil, err
 	}
 	var result response
 	switch action {
@@ -259,7 +268,7 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 	}
 	result.Challenge = next
 	result.session = session
-	return result, &params, nil
+	return result, params, nil
 }
 
 func (s *Service) events(ctx context.Context, terminal config.Terminal, body []byte) (response, error) {
@@ -326,6 +335,49 @@ func encryptionFromRequest(request *http.Request, security int) (EncryptionParam
 	return ParseEncryptionParameters(query.Get("security"), query.Get("iv"), query.Get("random"), security)
 }
 
+func payloadForSession(request *http.Request, terminal config.Terminal, session *Session, action string, body []byte, required bool) ([]byte, *EncryptionParameters, error) {
+	if session.Encrypted {
+		params, err := encryptionFromRequest(request, terminal.Security)
+		if err != nil {
+			return nil, nil, badRequest("%s encryption parameters: %v", action, err)
+		}
+		if required && len(body) == 0 {
+			return nil, nil, badRequest("%s body is required", action)
+		}
+		if len(body) == 0 {
+			return body, &params, nil
+		}
+		if err := requireContentType(request, "application/octet-stream"); err != nil {
+			return nil, nil, err
+		}
+		plain, err := decrypt(terminal, session.Salt, session.Iterations, params, body)
+		if err != nil {
+			return nil, nil, badRequest("%s decrypt: %v", action, err)
+		}
+		return plain, &params, nil
+	}
+	if request.URL.RawQuery != "" {
+		return nil, nil, badRequest("%s does not permit query parameters without negotiated encryption", action)
+	}
+	if required {
+		if err := requireContentType(request, "application/json"); err != nil {
+			return nil, nil, err
+		}
+		if len(body) == 0 {
+			return nil, nil, badRequest("%s body is required", action)
+		}
+	}
+	return body, nil, nil
+}
+
+func requireContentType(request *http.Request, expected string) error {
+	contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil || contentType != expected {
+		return &ProtocolError{Status: http.StatusUnsupportedMediaType, Message: "Content-Type must be " + expected}
+	}
+	return nil
+}
+
 func decodeExactJSON(body []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -360,7 +412,11 @@ func (s *Service) respond(writer http.ResponseWriter, terminal config.Terminal, 
 	if result.Challenge != "" {
 		writer.Header().Set("My-Custom-Challenge", result.Challenge)
 	}
-	writer.Header().Set("Content-Type", "application/json")
+	if params != nil {
+		writer.Header().Set("Content-Type", "application/octet-stream")
+	} else {
+		writer.Header().Set("Content-Type", "application/json")
+	}
 	writer.WriteHeader(http.StatusOK)
 	_, err = writer.Write(payload)
 	return err

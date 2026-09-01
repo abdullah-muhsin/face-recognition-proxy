@@ -14,6 +14,7 @@ type Session struct {
 	LoginChallenge string
 	NextChallenge  string
 	Iterations     int
+	Encrypted      bool
 	CreatedAt      time.Time
 	Authenticated  bool
 	mu             sync.Mutex
@@ -26,7 +27,7 @@ type Sessions struct {
 
 func NewSessions() *Sessions { return &Sessions{entries: make(map[string]*Session)} }
 
-func (s *Sessions) Start(terminal config.Terminal) (*Session, bool, error) {
+func (s *Sessions) Start(terminal config.Terminal, encrypted bool) (*Session, bool, error) {
 	salt, err := randomAlphaNumeric(64)
 	if err != nil {
 		return nil, false, fmt.Errorf("generate salt: %w", err)
@@ -37,7 +38,7 @@ func (s *Sessions) Start(terminal config.Terminal) (*Session, bool, error) {
 	}
 	// A fixed, documented value makes the key derivation reproducible for a
 	// terminal and avoids negotiating values outside the allowed range.
-	session := &Session{Terminal: terminal, Salt: salt, LoginChallenge: challenge, Iterations: 4096, CreatedAt: time.Now().UTC()}
+	session := &Session{Terminal: terminal, Salt: salt, LoginChallenge: challenge, Iterations: 4096, Encrypted: encrypted, CreatedAt: time.Now().UTC()}
 	s.mu.Lock()
 	previous := s.entries[terminal.PushSDKSerial]
 	s.entries[terminal.PushSDKSerial] = session
