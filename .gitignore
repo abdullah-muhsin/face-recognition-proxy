@@ -16,3 +16,7 @@ apps/**/.env.*
 apps/**/vendor/
 apps/**/node_modules/
 apps/**/public/build/
+
+# Workstation copies of production credentials. These files must never be
+# committed, archived with source bundles, or served by an application.
+/.local-secrets/
