@@ -259,29 +259,31 @@ public sealed partial class AttendanceEventParser
         }
 
         var headers = ParseHeaders(contentHeaders, eventId);
-        if (!headers.TryGetValue("Content-Type", out var contentType)
-            || !headers.TryGetValue("Content-Length", out var contentLengthText)
-            || !int.TryParse(contentLengthText, NumberStyles.None, CultureInfo.InvariantCulture, out var contentLength)
-            || contentLength < 0)
+        if (!headers.TryGetValue("Content-Type", out var contentType))
         {
-            throw new ProtocolException(400, $"Event '{eventId}' boundaryData must contain valid Content-Type and Content-Length headers.");
+            throw new ProtocolException(400, $"Event '{eventId}' boundaryData must contain a Content-Type header.");
         }
 
         var contentOffset = headerEnd + headerTerminator.Length;
-        if (rawData.Length - contentOffset != contentLength)
+        var contentEnd = rawData.Length;
+        if (headers.TryGetValue("Content-Length", out var contentLengthText))
         {
-            throw new ProtocolException(400, $"Event '{eventId}' boundaryData Content-Length does not match its payload.");
+            if (!int.TryParse(contentLengthText, NumberStyles.None, CultureInfo.InvariantCulture, out var contentLength)
+                || contentLength < 0
+                || rawData.Length - contentOffset != contentLength)
+            {
+                throw new ProtocolException(400, $"Event '{eventId}' boundaryData Content-Length does not match its payload.");
+            }
         }
 
         var boundary = ParseBoundaryValue(contentType, eventId);
         var delimiter = Encoding.ASCII.GetBytes("--" + boundary);
         var terminalDelimiter = Encoding.ASCII.GetBytes("--" + boundary + "--");
         var position = contentOffset;
-        var contentEnd = rawData.Length;
 
-        if (!StartsWith(rawData, position, delimiter) || !StartsWith(rawData, contentEnd - terminalDelimiter.Length, terminalDelimiter))
+        if (!StartsWith(rawData, position, delimiter))
         {
-            throw new ProtocolException(400, $"Event '{eventId}' boundaryData delimiters are invalid.");
+            throw new ProtocolException(400, $"Event '{eventId}' boundaryData must start with its multipart delimiter.");
         }
 
         var parts = new List<BoundaryPart>();
@@ -289,12 +291,18 @@ public sealed partial class AttendanceEventParser
         {
             if (StartsWith(rawData, position, terminalDelimiter))
             {
-                if (position + terminalDelimiter.Length != contentEnd)
+                var terminalEnd = position + terminalDelimiter.Length;
+                if (terminalEnd == contentEnd)
                 {
-                    throw new ProtocolException(400, $"Event '{eventId}' boundaryData contains bytes after the terminal delimiter.");
+                    break;
                 }
-
-                break;
+                if (terminalEnd + 2 == contentEnd
+                    && rawData[terminalEnd] == '\r'
+                    && rawData[terminalEnd + 1] == '\n')
+                {
+                    break;
+                }
+                throw new ProtocolException(400, $"Event '{eventId}' boundaryData contains bytes after the terminal delimiter.");
             }
 
             if (!StartsWith(rawData, position, delimiter))
@@ -311,24 +319,38 @@ public sealed partial class AttendanceEventParser
             }
 
             var partHeaders = ParseHeaders(Encoding.ASCII.GetString(rawData, position, partHeaderEnd - position).Split("\r\n"), eventId);
-            if (!partHeaders.TryGetValue("Content-Type", out var partContentType)
-                || !partHeaders.TryGetValue("Content-Length", out var partLengthText)
-                || !int.TryParse(partLengthText, NumberStyles.None, CultureInfo.InvariantCulture, out var partLength)
-                || partLength < 0
-                || !partHeaders.ContainsKey("Content-Disposition"))
+            if (!partHeaders.TryGetValue("Content-Type", out var partContentType))
             {
-                throw new ProtocolException(400, $"Event '{eventId}' boundaryData part has invalid headers.");
+                throw new ProtocolException(400, $"Event '{eventId}' boundaryData part is missing Content-Type.");
             }
 
             position = partHeaderEnd + headerTerminator.Length;
-            if (position + partLength > contentEnd)
+            byte[] content;
+            if (partHeaders.TryGetValue("Content-Length", out var partLengthText))
             {
-                throw new ProtocolException(400, $"Event '{eventId}' boundaryData part exceeds the declared payload length.");
+                if (!int.TryParse(partLengthText, NumberStyles.None, CultureInfo.InvariantCulture, out var partLength)
+                    || partLength < 0
+                    || position + partLength > contentEnd)
+                {
+                    throw new ProtocolException(400, $"Event '{eventId}' boundaryData part exceeds the declared payload length.");
+                }
+
+                content = rawData.AsSpan(position, partLength).ToArray();
+                position += partLength;
+                RequireCrLf(rawData, ref position, eventId);
+            }
+            else
+            {
+                var nextDelimiter = IndexOfBoundaryDelimiter(rawData, delimiter, position);
+                if (nextDelimiter < 0 || nextDelimiter >= contentEnd)
+                {
+                    throw new ProtocolException(400, $"Event '{eventId}' boundaryData part is missing its next delimiter.");
+                }
+
+                content = rawData.AsSpan(position, nextDelimiter - position).ToArray();
+                position = nextDelimiter + 2;
             }
 
-            var content = rawData.AsSpan(position, partLength).ToArray();
-            position += partLength;
-            RequireCrLf(rawData, ref position, eventId);
             parts.Add(new BoundaryPart(partContentType, content));
         }
 
@@ -413,6 +435,15 @@ public sealed partial class AttendanceEventParser
     {
         var offset = source.AsSpan(startIndex).IndexOf(value);
         return offset >= 0 ? startIndex + offset : -1;
+    }
+
+    private static int IndexOfBoundaryDelimiter(byte[] source, byte[] delimiter, int startIndex)
+    {
+        var prefixedDelimiter = new byte[delimiter.Length + 2];
+        prefixedDelimiter[0] = (byte)'\r';
+        prefixedDelimiter[1] = (byte)'\n';
+        delimiter.CopyTo(prefixedDelimiter, 2);
+        return IndexOf(source, prefixedDelimiter, startIndex);
     }
 
     private static JsonDocument ParseJson(byte[] value, string errorMessage)
