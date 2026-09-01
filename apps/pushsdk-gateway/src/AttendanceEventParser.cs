@@ -149,6 +149,15 @@ public sealed partial class AttendanceEventParser
         var metadataParts = parts.Where(part => HasMediaType(part.ContentType, "application/json") || HasMediaType(part.ContentType, "application/xml")).ToList();
         var pictureParts = parts.Where(part => HasMediaType(part.ContentType, "image/jpeg")).ToList();
 
+        // The terminal also sends opaque boundaryData entries (for example,
+        // device/status media) that have no JSON or XML metadata part. They
+        // cannot represent a canonical attendance event, so acknowledge them
+        // and allow the device queue to advance.
+        if (metadataParts.Count == 0)
+        {
+            return ParsedVendorEvent.Ignored(eventId, "boundaryData");
+        }
+
         if (metadataParts.Count != 1 || pictureParts.Count > 1 || parts.Count != metadataParts.Count + pictureParts.Count)
         {
             throw new ProtocolException(422, $"Event '{eventId}' boundaryData must contain exactly one JSON or XML metadata part and at most one JPEG picture part.");
@@ -233,7 +242,6 @@ public sealed partial class AttendanceEventParser
     private static IReadOnlyList<BoundaryPart> ParseBoundary(byte[] rawData, string eventId)
     {
         var headerTerminator = "\r\n\r\n"u8.ToArray();
-        var lfHeaderTerminator = "\n\n"u8.ToArray();
         var headerEnd = IndexOf(rawData, headerTerminator, 0);
         if (headerEnd < 0)
         {
@@ -315,7 +323,6 @@ public sealed partial class AttendanceEventParser
             var partHeaderEnd = IndexOf(rawData, headerTerminator, position);
             if (partHeaderEnd < 0)
             {
-                var lfHeaderTerminatorIndex = IndexOf(rawData, lfHeaderTerminator, position);
                 var nextDelimiterIndex = IndexOfBoundaryDelimiter(rawData, delimiter, position);
                 if (nextDelimiterIndex < 0 && TryCreateHeaderlessMetadataPart(rawData, position, out var headerlessPart))
                 {
@@ -323,11 +330,15 @@ public sealed partial class AttendanceEventParser
                     break;
                 }
 
-                throw new ProtocolException(
-                    400,
-                    $"Event '{eventId}' boundaryData part is missing its header terminator " +
-                    $"(LF separator offset {RelativeOffset(lfHeaderTerminatorIndex, position)}, " +
-                    $"next delimiter offset {RelativeOffset(nextDelimiterIndex, position)}).");
+                if (nextDelimiterIndex < 0)
+                {
+                    // The DS-K1T342MFWX-E1 can emit a headerless opaque item
+                    // without a closing delimiter. It has no usable attendance
+                    // metadata and is intentionally acknowledged as ignored.
+                    break;
+                }
+
+                throw new ProtocolException(400, $"Event '{eventId}' boundaryData part is missing its header terminator.");
             }
 
             var partHeaders = ParseHeaders(Encoding.ASCII.GetString(rawData, position, partHeaderEnd - position).Split("\r\n"), eventId);
@@ -457,8 +468,6 @@ public sealed partial class AttendanceEventParser
         delimiter.CopyTo(prefixedDelimiter, 2);
         return IndexOf(source, prefixedDelimiter, startIndex);
     }
-
-    private static int RelativeOffset(int index, int startIndex) => index < 0 ? -1 : index - startIndex;
 
     private static bool TryCreateHeaderlessMetadataPart(byte[] source, int startIndex, out BoundaryPart part)
     {

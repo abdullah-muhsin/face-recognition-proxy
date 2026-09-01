@@ -92,6 +92,26 @@ public sealed class AttendanceEventParserTests
     }
 
     [Fact]
+    public void AcknowledgesAnOpaqueTerminalBoundaryEntry()
+    {
+        using var environment = new TestEnvironment();
+        var parser = new AttendanceEventParser(environment.CreateOptions());
+        var rawBoundary = BuildBoundaryPayload(
+            new byte[] { 0xff, 0xd8, 0xff, 0xe0, 0x00 },
+            null,
+            includeHttpStatusLine: false,
+            includeContentLengths: false,
+            includePartHeaders: false,
+            includeTerminalDelimiter: false);
+        var body = TestProtocol.BuildEventEnvelope("event-opaque-boundary-1", "boundaryData", rawBoundary);
+
+        var parsed = Assert.Single(parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
+
+        Assert.Equal("boundaryData", parsed.DataFormat);
+        Assert.Null(parsed.Delivery);
+    }
+
+    [Fact]
     public void RejectsAnAccessEventMissingItsRequiredEmployeeNumber()
     {
         using var environment = new TestEnvironment();
