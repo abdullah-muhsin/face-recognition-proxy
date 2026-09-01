@@ -135,7 +135,7 @@ public sealed class AttendanceEventParserTests
     }
 
     [Fact]
-    public void RejectsAnAccessEventMissingItsRequiredEmployeeNumber()
+    public void IgnoresAnAccessEventWithoutAnEmployeeIdentity()
     {
         using var environment = new TestEnvironment();
         var parser = new AttendanceEventParser(environment.CreateOptions());
@@ -149,9 +149,10 @@ public sealed class AttendanceEventParserTests
             """);
         var body = TestProtocol.BuildEventEnvelope("event-invalid-1", "jsonData", raw);
 
-        var exception = Assert.Throws<ProtocolException>(() => parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
+        var parsed = Assert.Single(parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
 
-        Assert.Equal(422, exception.StatusCode);
+        Assert.Equal("jsonData", parsed.DataFormat);
+        Assert.Null(parsed.Delivery);
     }
 
     [Fact]

@@ -128,13 +128,19 @@ public sealed partial class AttendanceEventParser
         }
 
         var eventData = RequiredElement(root, "AccessControllerEvent", eventId);
+        var employeeNumber = OptionalElementValue(eventData, "employeeNoString", eventId, 80);
+        if (string.IsNullOrWhiteSpace(employeeNumber))
+        {
+            return ParsedVendorEvent.Ignored(eventId, "xmlData");
+        }
+
         return ParsedVendorEvent.ForDelivery(
             eventId,
             "xmlData",
             new CanonicalAttendanceEvent(
                 terminalSerialNumber,
                 ParseTimestamp(RequiredElementValue(root, "dateTime", eventId), eventId),
-                RequiredElementValue(eventData, "employeeNoString", eventId, 80),
+                employeeNumber,
                 OptionalElementValue(eventData, "name", eventId, 160),
                 RequiredElementValue(eventData, "currentVerifyMode", eventId, 80),
                 AttendanceStatusOrUndefined(OptionalElementValue(eventData, "attendanceStatus", eventId, 80)),
@@ -224,13 +230,19 @@ public sealed partial class AttendanceEventParser
         }
 
         RequireObject(accessControllerEvent, $"Event '{eventId}' AccessControllerEvent must be an object.");
+        var employeeNumber = OptionalString(accessControllerEvent, "employeeNoString", 80);
+        if (string.IsNullOrWhiteSpace(employeeNumber))
+        {
+            return ParsedVendorEvent.Ignored(eventId, dataFormat);
+        }
+
         return ParsedVendorEvent.ForDelivery(
             eventId,
             dataFormat,
             new CanonicalAttendanceEvent(
                 terminalSerialNumber,
                 ParseTimestamp(RequireString(root, "dateTime", 32), eventId),
-                RequireString(accessControllerEvent, "employeeNoString", 80),
+                employeeNumber,
                 OptionalString(accessControllerEvent, "name", 160),
                 RequireString(accessControllerEvent, "currentVerifyMode", 80),
                 AttendanceStatusOrUndefined(OptionalString(accessControllerEvent, "attendanceStatus", 80)),
