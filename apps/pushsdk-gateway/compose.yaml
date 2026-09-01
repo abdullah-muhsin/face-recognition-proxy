@@ -1,0 +1,52 @@
+services:
+  gateway-volume-init:
+    build:
+      context: .
+    image: pushsdk-gateway:local
+    user: "0:0"
+    entrypoint: ["chown", "--recursive", "pushsdk:pushsdk", "/var/lib/pushsdk-gateway"]
+    restart: "no"
+    volumes:
+      - pushsdk_gateway_data:/var/lib/pushsdk-gateway
+
+  gateway:
+    build:
+      context: .
+    image: pushsdk-gateway:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    env_file:
+      - ${PUSHSDK_GATEWAY_RUNTIME_ENV_FILE:-.env.production}
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      PUSHSDK_GATEWAY_CONFIG_PATH: /etc/pushsdk-gateway/gateway.json
+    depends_on:
+      gateway-volume-init:
+        condition: service_completed_successfully
+    ports:
+      - "${PUSHSDK_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${PUSHSDK_GATEWAY_HOST_PORT:-8100}:8080"
+    volumes:
+      - ${PUSHSDK_GATEWAY_CONFIG_FILE:?Set PUSHSDK_GATEWAY_CONFIG_FILE in .env.production.}:/etc/pushsdk-gateway/gateway.json:ro
+      - pushsdk_gateway_data:/var/lib/pushsdk-gateway
+    networks:
+      pushsdk_gateway:
+        aliases:
+          - pushsdk-gateway
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q -O - http://127.0.0.1:8080/healthz | grep -qx '{\"status\":\"ok\"}'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  pushsdk_gateway_data:
+    name: pushsdk_gateway_data
+
+networks:
+  pushsdk_gateway:
+    name: attendance_pushsdk_internal
+    external: true

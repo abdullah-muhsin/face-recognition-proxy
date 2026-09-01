@@ -3,7 +3,7 @@
 This Laravel demo receives canonical attendance records from a dedicated Hikvision Push SDK gateway. It deliberately does not implement the terminal protocol or store terminal credentials.
 
 ```text
-Hikvision terminal -> outbound HTTPS/WSS -> Push SDK gateway -> private Laravel API -> SQLite + private picture storage
+Hikvision terminal -> outbound HTTPS -> Push SDK gateway -> private Laravel API -> SQLite + private picture storage
 ```
 
 The terminal must connect outward to the gateway. Do not expose the terminal's ISAPI management ports to make this demo work.
@@ -45,7 +45,9 @@ Copy `docker/production.env.example` to `.env.production`, set `APP_KEY`, `APP_U
 docker compose up --build -d
 ```
 
-The Compose project creates the internal `attendance_pushsdk_internal` network. The future gateway joins that network and calls Laravel directly; public Nginx traffic is denied from `/api/internal/push-sdk/`.
+The Compose project creates the internal `attendance_pushsdk_internal` network and the `attendance_receiver_pushsdk` DNS alias. The gateway joins that network and calls Laravel directly; public Nginx traffic is denied from `/api/internal/push-sdk/`.
+
+Deploy the terminal-facing gateway separately, using its [gateway guide](/home/magnet/services/face-recognition-proxy/apps/pushsdk-gateway/README.md). It owns the Push SDK session and only sends canonical records to this application.
 
 Use [the Push SDK Nginx template](/home/magnet/services/face-recognition-proxy/deploy/nginx/attendance-receiver-pushsdk.conf) for the demo dashboard. The production release command uses its own runtime directory and container:
 

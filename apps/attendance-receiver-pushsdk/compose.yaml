@@ -13,12 +13,14 @@ services:
     env_file:
       - .env.production
     ports:
-      - "${ATTENDANCE_RECEIVER_BIND_ADDRESS:-127.0.0.1}:${ATTENDANCE_RECEIVER_HOST_PORT:-8001}:80"
+      - "${ATTENDANCE_RECEIVER_BIND_ADDRESS:-127.0.0.1}:${ATTENDANCE_RECEIVER_HOST_PORT:-8002}:80"
     volumes:
       - attendance_receiver_pushsdk_data:/var/lib/attendance-receiver
       - attendance_receiver_pushsdk_storage:/var/www/html/storage
     networks:
-      - pushsdk_gateway
+      pushsdk_gateway:
+        aliases:
+          - attendance_receiver_pushsdk
 
 volumes:
   attendance_receiver_pushsdk_data:
