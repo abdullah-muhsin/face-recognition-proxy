@@ -7,6 +7,16 @@ embedded/**/firmware/**/main/local_defaults.h
 /network-service-codebase.zip
 /third_party/hikvision/
 
+# Complete local source snapshots created before an intentional platform rebuild.
+# They are retained for recovery only and must never become release inputs.
+/backups/
+
+# Terminal connection details and deployment credentials are local-only.
+/config/terminals.json
+.env
+/web/node_modules/
+/web/dist/
+
 docs/**/credentials.local.md
 docs/**/.env.local
 

@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pushsdk
+      POSTGRES_USER: pushsdk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the protected environment file}
+    volumes:
+      - pushsdk-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pushsdk -d pushsdk"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  gateway:
+    build:
+      context: .
+    image: ${GATEWAY_IMAGE:-pushsdk-gateway:local}
+    restart: unless-stopped
+    env_file:
+      - ${GATEWAY_ENV_FILE:?set GATEWAY_ENV_FILE to a protected environment file}
+      - ${TERMINAL_SECRETS_FILE:?set TERMINAL_SECRETS_FILE to protected terminal credentials}
+    environment:
+      GATEWAY_LISTEN_ADDRESS: :8080
+      GATEWAY_TERMINALS_FILE: /run/gateway/terminals.json
+      WEB_DIR: /app/web
+      MIGRATIONS_DIR: /app/migrations
+    volumes:
+      - ${TERMINALS_FILE:?set TERMINALS_FILE to a protected terminal configuration}:/run/gateway/terminals.json:ro
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pushsdk-postgres:

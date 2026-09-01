@@ -1,0 +1,6 @@
+.git
+.local-secrets
+backups
+config/terminals.json
+web/node_modules
+web/dist
