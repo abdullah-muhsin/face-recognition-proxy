@@ -52,7 +52,12 @@ public sealed class AttendanceEventParserTests
         using var environment = new TestEnvironment();
         var parser = new AttendanceEventParser(environment.CreateOptions());
         var metadata = TestProtocol.AccessEventJson("2003");
-        var rawBoundary = BuildBoundaryPayload(metadata, null, includeHttpStatusLine: false, includeContentLengths: false);
+        var rawBoundary = BuildBoundaryPayload(
+            metadata,
+            null,
+            includeHttpStatusLine: false,
+            includeContentLengths: false,
+            initialBlankLines: 1);
         var body = TestProtocol.BuildEventEnvelope("event-direct-boundary-1", "boundaryData", rawBoundary);
 
         var parsed = Assert.Single(parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
@@ -100,7 +105,8 @@ public sealed class AttendanceEventParserTests
         byte[] metadata,
         byte[]? picture,
         bool includeHttpStatusLine = true,
-        bool includeContentLengths = true)
+        bool includeContentLengths = true,
+        int initialBlankLines = 0)
     {
         const string boundary = "hikvision-boundary-001";
         var multipart = new MemoryStream();
@@ -141,6 +147,10 @@ public sealed class AttendanceEventParserTests
             WriteAscii(payload, $"Content-Length: {multipartBytes.Length}\r\n");
         }
         WriteAscii(payload, "\r\n");
+        for (var index = 0; index < initialBlankLines; index++)
+        {
+            WriteAscii(payload, "\r\n");
+        }
         payload.Write(multipartBytes);
         return payload.ToArray();
     }

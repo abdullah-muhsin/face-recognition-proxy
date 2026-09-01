@@ -279,9 +279,8 @@ public sealed partial class AttendanceEventParser
         var boundary = ParseBoundaryValue(contentType, eventId);
         var delimiter = Encoding.ASCII.GetBytes("--" + boundary);
         var terminalDelimiter = Encoding.ASCII.GetBytes("--" + boundary + "--");
-        var position = contentOffset;
-
-        if (!StartsWith(rawData, position, delimiter))
+        var position = FindInitialBoundary(rawData, delimiter, contentOffset);
+        if (position < 0)
         {
             throw new ProtocolException(400, $"Event '{eventId}' boundaryData must start with its multipart delimiter.");
         }
@@ -444,6 +443,28 @@ public sealed partial class AttendanceEventParser
         prefixedDelimiter[1] = (byte)'\n';
         delimiter.CopyTo(prefixedDelimiter, 2);
         return IndexOf(source, prefixedDelimiter, startIndex);
+    }
+
+    private static int FindInitialBoundary(byte[] source, byte[] delimiter, int startIndex)
+    {
+        var delimiterIndex = IndexOf(source, delimiter, startIndex);
+        if (delimiterIndex < 0)
+        {
+            return -1;
+        }
+
+        // Some terminals serialize one or more blank lines between the outer
+        // multipart headers and the first delimiter. Accept only CRLF bytes in
+        // this gap; it cannot conceal an unparsed header or payload.
+        for (var index = startIndex; index < delimiterIndex; index++)
+        {
+            if (source[index] is not (byte)'\r' and not (byte)'\n')
+            {
+                return -1;
+            }
+        }
+
+        return delimiterIndex;
     }
 
     private static JsonDocument ParseJson(byte[] value, string errorMessage)
