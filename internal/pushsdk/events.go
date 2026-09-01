@@ -45,13 +45,13 @@ type ParsedEvent struct {
 }
 
 type eventEnvelope struct {
-	EventNum  int         `json:"eventNum"`
-	EventList []eventItem `json:"eventList"`
+	EventNum  *int         `json:"eventNum"`
+	EventList *[]eventItem `json:"eventList"`
 }
 type eventItem struct {
-	UUID       string `json:"UUID"`
-	DataFormat string `json:"dataFormat"`
-	Data       string `json:"data"`
+	UUID       string  `json:"UUID"`
+	DataFormat string  `json:"dataFormat"`
+	Data       *string `json:"data"`
 }
 
 func ParseEventBatch(terminalSerial string, body []byte) ([]ParsedEvent, error) {
@@ -64,15 +64,18 @@ func ParseEventBatch(terminalSerial string, body []byte) ([]ParsedEvent, error) 
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, badRequest("event envelope contains a trailing JSON value")
 	}
-	if envelope.EventNum < 0 || envelope.EventNum > 20 {
+	if envelope.EventNum == nil || envelope.EventList == nil {
+		return nil, badRequest("event envelope must contain eventNum and eventList")
+	}
+	if *envelope.EventNum < 0 || *envelope.EventNum > 20 {
 		return nil, badRequest("eventNum must be between 0 and 20")
 	}
-	if len(envelope.EventList) != envelope.EventNum {
+	if len(*envelope.EventList) != *envelope.EventNum {
 		return nil, badRequest("eventNum must equal eventList length")
 	}
-	seen := make(map[string]struct{}, len(envelope.EventList))
-	parsed := make([]ParsedEvent, 0, len(envelope.EventList))
-	for _, item := range envelope.EventList {
+	seen := make(map[string]struct{}, len(*envelope.EventList))
+	parsed := make([]ParsedEvent, 0, len(*envelope.EventList))
+	for _, item := range *envelope.EventList {
 		if !vendorEventID.MatchString(item.UUID) {
 			return nil, badRequest("event UUID is invalid")
 		}
@@ -83,7 +86,10 @@ func ParseEventBatch(terminalSerial string, body []byte) ([]ParsedEvent, error) 
 		if item.DataFormat != "jsonData" && item.DataFormat != "xmlData" && item.DataFormat != "boundaryData" && item.DataFormat != "noData" {
 			return nil, badRequest("event %s has an unsupported dataFormat", item.UUID)
 		}
-		payload, err := base64.StdEncoding.DecodeString(item.Data)
+		if item.Data == nil {
+			return nil, badRequest("event %s has no data", item.UUID)
+		}
+		payload, err := base64.StdEncoding.DecodeString(*item.Data)
 		if err != nil {
 			return nil, badRequest("event %s data is not base64: %v", item.UUID, err)
 		}

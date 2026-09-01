@@ -1,8 +1,9 @@
 # Device migration and acceptance test
 
-Do not point the terminal at this new gateway until the Compose project and
-Nginx routes are healthy. The old deployed gateway remains a separate running
-service until this checklist is completed and an explicit cutover is approved.
+Use this runbook when adding or reconfiguring a terminal. The public virtual
+host deliberately denies readiness and metrics paths, so health checks are made
+only through the VPS loopback listener. Existing legacy services are already
+retired; this runbook does not start, stop, or reconfigure unrelated projects.
 
 ## Prepare the protected configuration
 
@@ -12,6 +13,9 @@ canonical device serial used in PostgreSQL; `pushSdkSerial` is the value in the
 PushSDK URL. The username and password must exactly match the values entered in
 the terminal's PushSDK screen. `securityVersion` must be either `3` or `4` and
 match the terminal's negotiated capability; this gateway does not downgrade.
+`loginPasswordDigest` must be the single PBKDF2 algorithm documented for that
+exact firmware (`sha256` or `sha1`). It is not inferred from a failed login;
+the previous `digest` mapping key is not accepted.
 
 Use HTTPS server `vps.itplus.club`, HTTPS port `443`, and WebSocket port `443`
 only after Nginx routes to the new loopback gateway. The terminal must show
@@ -19,8 +23,8 @@ online registration before continuing.
 
 ## Acceptance sequence
 
-1. Confirm `GET https://vps.itplus.club/readyz` is successful through the new
-   gateway (or `curl http://127.0.0.1:18080/readyz` on the VPS).
+1. On the VPS, confirm `curl --fail http://127.0.0.1:18080/readyz` succeeds.
+   The equivalent public URL intentionally returns `404` at Nginx.
 2. Open `https://vps.itplus.club/app/`, sign in, and confirm the configured
    terminal initially reads `offline`.
 3. Enable PushSDK on the terminal. The live monitor must show `auth_info` then

@@ -35,10 +35,10 @@ type Terminal struct {
 	Username                    string `json:"username"`
 	PasswordEnvironmentVariable string `json:"passwordEnvironmentVariable"`
 	Password                    string `json:"-"`
-	Digest                      string `json:"digest"`
-	Security                    int    `json:"securityVersion"`
-	CommandSeconds              int    `json:"commandIntervalSeconds"`
-	ErrorDelay                  int    `json:"errorDelaySeconds"`
+	LoginPasswordDigest         string `json:"loginPasswordDigest"`
+	SecurityVersion             int    `json:"securityVersion"`
+	CommandIntervalSeconds      int    `json:"commandIntervalSeconds"`
+	ErrorDelaySeconds           int    `json:"errorDelaySeconds"`
 }
 
 func Load() (Config, error) {
@@ -51,27 +51,33 @@ func Load() (Config, error) {
 		WebDir:        env("WEB_DIR"),
 		MigrationsDir: env("MIGRATIONS_DIR"),
 	}
-	if raw := os.Getenv("COOKIE_SECURE"); raw != "" {
-		value, err := strconv.ParseBool(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("COOKIE_SECURE: %w", err)
-		}
-		c.CookieSecure = value
+	rawCookieSecure, present := os.LookupEnv("COOKIE_SECURE")
+	if !present || rawCookieSecure == "" {
+		return Config{}, fmt.Errorf("COOKIE_SECURE is required")
 	}
-	if raw := os.Getenv("SESSION_TTL"); raw != "" {
-		value, err := time.ParseDuration(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("SESSION_TTL: %w", err)
-		}
-		c.SessionTTL = value
+	cookieSecure, err := strconv.ParseBool(rawCookieSecure)
+	if err != nil {
+		return Config{}, fmt.Errorf("COOKIE_SECURE: %w", err)
 	}
-	if raw := os.Getenv("METRICS_ALLOW_CIDRS"); raw != "" {
-		for _, value := range strings.Split(raw, ",") {
-			value = strings.TrimSpace(value)
-			if value != "" {
-				c.MetricsCIDRs = append(c.MetricsCIDRs, value)
-			}
+	c.CookieSecure = cookieSecure
+	rawSessionTTL, present := os.LookupEnv("SESSION_TTL")
+	if !present || rawSessionTTL == "" {
+		return Config{}, fmt.Errorf("SESSION_TTL is required")
+	}
+	sessionTTL, err := time.ParseDuration(rawSessionTTL)
+	if err != nil {
+		return Config{}, fmt.Errorf("SESSION_TTL: %w", err)
+	}
+	c.SessionTTL = sessionTTL
+	rawMetricsCIDRs, present := os.LookupEnv("METRICS_ALLOW_CIDRS")
+	if !present || rawMetricsCIDRs == "" {
+		return Config{}, fmt.Errorf("METRICS_ALLOW_CIDRS is required")
+	}
+	for _, value := range strings.Split(rawMetricsCIDRs, ",") {
+		if value == "" {
+			return Config{}, fmt.Errorf("METRICS_ALLOW_CIDRS contains an empty entry")
 		}
+		c.MetricsCIDRs = append(c.MetricsCIDRs, value)
 	}
 	if err := c.loadTerminals(); err != nil {
 		return Config{}, err
@@ -103,18 +109,21 @@ func (c *Config) loadTerminals() error {
 }
 
 func (c Config) Validate() error {
-	required := map[string]string{
-		"GATEWAY_LISTEN_ADDRESS": c.ListenAddress,
-		"DATABASE_URL":           c.DatabaseURL,
-		"GATEWAY_TERMINALS_FILE": c.TerminalsFile,
-		"ADMIN_USERNAME":         c.AdminUsername,
-		"ADMIN_PASSWORD":         c.AdminPassword,
-		"WEB_DIR":                c.WebDir,
-		"MIGRATIONS_DIR":         c.MigrationsDir,
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "GATEWAY_LISTEN_ADDRESS", value: c.ListenAddress},
+		{name: "DATABASE_URL", value: c.DatabaseURL},
+		{name: "GATEWAY_TERMINALS_FILE", value: c.TerminalsFile},
+		{name: "ADMIN_USERNAME", value: c.AdminUsername},
+		{name: "ADMIN_PASSWORD", value: c.AdminPassword},
+		{name: "WEB_DIR", value: c.WebDir},
+		{name: "MIGRATIONS_DIR", value: c.MigrationsDir},
 	}
-	for name, value := range required {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s is required", name)
+	for _, setting := range required {
+		if strings.TrimSpace(setting.value) == "" {
+			return fmt.Errorf("%s is required", setting.name)
 		}
 	}
 	if c.SessionTTL <= 0 {
@@ -131,27 +140,30 @@ func (c Config) Validate() error {
 		prefix := fmt.Sprintf("terminals[%d]", i)
 		for field, value := range map[string]string{
 			"serialNumber": terminal.SerialNumber, "pushSdkSerial": terminal.PushSDKSerial,
-			"username": terminal.Username, "passwordEnvironmentVariable": terminal.PasswordEnvironmentVariable, "digest": terminal.Digest,
+			"username": terminal.Username, "passwordEnvironmentVariable": terminal.PasswordEnvironmentVariable, "loginPasswordDigest": terminal.LoginPasswordDigest,
 		} {
 			if strings.TrimSpace(value) == "" {
 				return fmt.Errorf("%s.%s is required", prefix, field)
 			}
 		}
-		if seenDevice[terminal.SerialNumber] || seenPush[terminal.PushSDKSerial] {
-			return fmt.Errorf("%s has a duplicate serial", prefix)
+		if seenDevice[terminal.SerialNumber] {
+			return fmt.Errorf("%s.serialNumber is duplicated", prefix)
+		}
+		if seenPush[terminal.PushSDKSerial] {
+			return fmt.Errorf("%s.pushSdkSerial is duplicated", prefix)
 		}
 		seenDevice[terminal.SerialNumber], seenPush[terminal.PushSDKSerial] = true, true
-		if terminal.Digest != "sha256" {
-			return fmt.Errorf("%s.digest must be sha256", prefix)
+		if terminal.LoginPasswordDigest != "sha1" && terminal.LoginPasswordDigest != "sha256" {
+			return fmt.Errorf("%s.loginPasswordDigest must be sha1 or sha256", prefix)
 		}
-		if terminal.Security != 3 && terminal.Security != 4 {
+		if terminal.SecurityVersion != 3 && terminal.SecurityVersion != 4 {
 			return fmt.Errorf("%s.securityVersion must be 3 or 4", prefix)
 		}
-		if terminal.CommandSeconds < 1 || terminal.CommandSeconds > 300 {
+		if terminal.CommandIntervalSeconds < 1 || terminal.CommandIntervalSeconds > 300 {
 			return fmt.Errorf("%s.commandIntervalSeconds must be 1..300", prefix)
 		}
-		if terminal.ErrorDelay < 1 || terminal.ErrorDelay > 300 {
-			return fmt.Errorf("%s.errorDelaySeconds must be 1..300", prefix)
+		if terminal.ErrorDelaySeconds < 30 || terminal.ErrorDelaySeconds > 300 {
+			return fmt.Errorf("%s.errorDelaySeconds must be 30..300", prefix)
 		}
 		if !environmentVariableName.MatchString(terminal.PasswordEnvironmentVariable) {
 			return fmt.Errorf("%s.passwordEnvironmentVariable is invalid", prefix)
@@ -179,6 +191,6 @@ func (t Terminal) CredentialFingerprint() string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func env(name string) string { return strings.TrimSpace(os.Getenv(name)) }
+func env(name string) string { return os.Getenv(name) }
 
 var environmentVariableName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)

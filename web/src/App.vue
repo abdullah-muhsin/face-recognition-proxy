@@ -8,7 +8,6 @@ const error = ref('')
 const loading = ref(false)
 const overview = ref({ attendanceTotal: 0, terminals: [] })
 const records = ref([])
-const total = ref(0)
 const monitor = ref([])
 const socketState = ref('disconnected')
 let socket
@@ -50,12 +49,11 @@ async function refresh() {
     ])
     overview.value = currentOverview
     records.value = page.records
-    total.value = page.total
-	return true
+    return true
   } catch (exception) {
     if (exception.message === 'authentication required') authenticated.value = false
     else error.value = exception.message
-	return false
+    return false
   }
 }
 
@@ -121,7 +119,6 @@ onBeforeUnmount(() => { if (socket) socket.close() })
         <article><span>Attendance records</span><strong>{{ overview.attendanceTotal }}</strong></article>
         <article><span>Registered terminals</span><strong>{{ overview.terminals.length }}</strong></article>
         <article><span>Online terminals</span><strong>{{ onlineTerminals }}</strong></article>
-        <article><span>Loaded records</span><strong>{{ total }}</strong></article>
       </section>
       <section class="panel">
         <h2>Terminals</h2>

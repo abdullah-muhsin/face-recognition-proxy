@@ -14,11 +14,22 @@ type Session struct {
 	LoginChallenge string
 	NextChallenge  string
 	Iterations     int
-	Encrypted      bool
+	PayloadMode    PayloadMode
 	CreatedAt      time.Time
 	Authenticated  bool
 	mu             sync.Mutex
 }
+
+// PayloadMode is negotiated once by AuthInfo and applies to every subsequent
+// request and response in the session.
+type PayloadMode string
+
+const (
+	PlaintextPayload PayloadMode = "plaintext"
+	EncryptedPayload PayloadMode = "encrypted"
+)
+
+func (m PayloadMode) IsEncrypted() bool { return m == EncryptedPayload }
 
 type Sessions struct {
 	mu      sync.RWMutex
@@ -27,18 +38,25 @@ type Sessions struct {
 
 func NewSessions() *Sessions { return &Sessions{entries: make(map[string]*Session)} }
 
-func (s *Sessions) Start(terminal config.Terminal, encrypted bool) (*Session, bool, error) {
+type SessionStart struct {
+	Session                      *Session
+	ReplacedAuthenticatedSession bool
+}
+
+const keyDerivationIterations = 4096
+
+func (s *Sessions) Start(terminal config.Terminal, mode PayloadMode) (SessionStart, error) {
 	salt, err := randomAlphaNumeric(64)
 	if err != nil {
-		return nil, false, fmt.Errorf("generate salt: %w", err)
+		return SessionStart{}, fmt.Errorf("generate salt: %w", err)
 	}
 	challenge, err := randomAlphaNumeric(64)
 	if err != nil {
-		return nil, false, fmt.Errorf("generate challenge: %w", err)
+		return SessionStart{}, fmt.Errorf("generate challenge: %w", err)
 	}
-	// A fixed, documented value makes the key derivation reproducible for a
-	// terminal and avoids negotiating values outside the allowed range.
-	session := &Session{Terminal: terminal, Salt: salt, LoginChallenge: challenge, Iterations: 4096, Encrypted: encrypted, CreatedAt: time.Now().UTC()}
+	// This fixed gateway value is inside the vendor's documented 500..5000
+	// range; it is deliberately not negotiated from untrusted terminal input.
+	session := &Session{Terminal: terminal, Salt: salt, LoginChallenge: challenge, Iterations: keyDerivationIterations, PayloadMode: mode, CreatedAt: time.Now().UTC()}
 	s.mu.Lock()
 	previous := s.entries[terminal.PushSDKSerial]
 	s.entries[terminal.PushSDKSerial] = session
@@ -49,7 +67,7 @@ func (s *Sessions) Start(terminal config.Terminal, encrypted bool) (*Session, bo
 		wasAuthenticated = previous.Authenticated
 		previous.mu.Unlock()
 	}
-	return session, wasAuthenticated, nil
+	return SessionStart{Session: session, ReplacedAuthenticatedSession: wasAuthenticated}, nil
 }
 
 func (s *Sessions) Get(pushSDKSerial string) (*Session, bool) {
@@ -65,12 +83,12 @@ func (s *Sessions) Remove(pushSDKSerial string) {
 	s.mu.Unlock()
 }
 
-func (s *Session) LoginExpired(now time.Time) bool {
-	return now.After(s.CreatedAt.Add(time.Duration(s.Terminal.CommandSeconds*3) * time.Second))
+func (s *Session) LoginChallengeExpired(now time.Time) bool {
+	return now.After(s.CreatedAt.Add(time.Duration(s.Terminal.CommandIntervalSeconds*3) * time.Second))
 }
 
 func (s *Session) IssueNextChallenge() (string, error) {
-	challenge, err := randomAlphaNumeric(64)
+	challenge, err := randomCustomChallenge()
 	if err != nil {
 		return "", err
 	}

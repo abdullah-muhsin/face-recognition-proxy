@@ -89,7 +89,12 @@ func (s *Store) Migrate(ctx context.Context, directory string) error {
 	return nil
 }
 
-func (s *Store) SyncTerminals(ctx context.Context, terminals []config.Terminal) error {
+// SynchronizeConfiguredTerminals upserts every deployed terminal mapping. A
+// process restart cannot prove that an old socket is still alive, so every
+// configured terminal starts as offline until it completes AuthInfo and Login
+// again. Historical terminal rows are intentionally retained because attendance
+// records reference their canonical serial numbers.
+func (s *Store) SynchronizeConfiguredTerminals(ctx context.Context, terminals []config.Terminal) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -109,23 +114,50 @@ func (s *Store) SyncTerminals(ctx context.Context, terminals []config.Terminal) 
 			  connection_status = 'offline',
 			  last_error = NULL,
 			  updated_at = now()`,
-			terminal.SerialNumber, terminal.PushSDKSerial, terminal.Username, terminal.CredentialFingerprint(), terminal.Security, terminal.CommandSeconds, terminal.ErrorDelay)
+			terminal.SerialNumber, terminal.PushSDKSerial, terminal.Username, terminal.CredentialFingerprint(), terminal.SecurityVersion, terminal.CommandIntervalSeconds, terminal.ErrorDelaySeconds)
 		if err != nil {
-			return fmt.Errorf("sync terminal %s: %w", terminal.SerialNumber, err)
+			return fmt.Errorf("reconcile terminal %s: %w", terminal.SerialNumber, err)
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-func (s *Store) EnsureAdmin(ctx context.Context, username, password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+// ReconcileConfiguredOperator maintains the one operator account configured by
+// ADMIN_USERNAME and ADMIN_PASSWORD. The application has no multi-user
+// provisioning interface, so retaining a previous configured username would
+// create an undocumented second administrative path.
+func (s *Store) ReconcileConfiguredOperator(ctx context.Context, username, password string) error {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("hash admin password: %w", err)
+		return fmt.Errorf("begin operator reconciliation: %w", err)
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)
-        ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now()`, username, string(hash))
-	if err != nil {
-		return fmt.Errorf("upsert admin user: %w", err)
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM admin_users WHERE username <> $1`, username); err != nil {
+		return fmt.Errorf("remove replaced operator: %w", err)
+	}
+	var currentHash string
+	err = tx.QueryRow(ctx, `SELECT password_hash FROM admin_users WHERE username = $1`, username).Scan(&currentHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if hashErr != nil {
+			return fmt.Errorf("hash operator password: %w", hashErr)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)`, username, string(hash)); err != nil {
+			return fmt.Errorf("create configured operator: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("load configured operator: %w", err)
+	} else if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(password)) != nil {
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if hashErr != nil {
+			return fmt.Errorf("hash operator password: %w", hashErr)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE admin_users SET password_hash = $2, updated_at = now() WHERE username = $1`, username, string(hash)); err != nil {
+			return fmt.Errorf("update configured operator: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit operator reconciliation: %w", err)
 	}
 	return nil
 }

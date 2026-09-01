@@ -5,10 +5,12 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"regexp"
 
@@ -47,8 +49,22 @@ func passwordHash(terminal config.Terminal, salt string) string {
 }
 
 func expectedLoginPassword(terminal config.Terminal, salt, challenge string, iterations int) string {
-	value := pbkdf2.Key([]byte(passwordHash(terminal, salt)+challenge), []byte(salt), iterations, 64, sha256.New)
+	value := pbkdf2.Key([]byte(passwordHash(terminal, salt)+challenge), []byte(salt), iterations, 64, loginPasswordHash(terminal.LoginPasswordDigest))
 	return hex.EncodeToString(value)
+}
+
+// loginPasswordHash selects the one digest explicitly configured for this
+// terminal. Config validation rejects every other value, so this never guesses
+// a legacy digest after an authentication failure.
+func loginPasswordHash(digest string) func() hash.Hash {
+	switch digest {
+	case "sha1":
+		return sha1.New
+	case "sha256":
+		return sha256.New
+	default:
+		panic("terminal login password digest was not validated")
+	}
 }
 
 func expectedCustomAuth(terminal config.Terminal, salt, challenge string) string {
@@ -147,4 +163,14 @@ func unpadPKCS7(value []byte) ([]byte, error) {
 
 func constantTimeEqual(left, right string) bool {
 	return hmac.Equal([]byte(left), []byte(right))
+}
+
+// randomCustomChallenge creates the exact lower-case hexadecimal form required
+// for the My-Custom-Challenge response header.
+func randomCustomChallenge() (string, error) {
+	value := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }

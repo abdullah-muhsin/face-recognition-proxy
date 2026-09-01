@@ -21,8 +21,9 @@ denied at Nginx and additionally CIDR-checked by Go.
 
 ## Modules
 
-- `internal/pushsdk`: wire protocol, challenge lifecycle, AES-CBC encryption,
-  exact event validation, and acknowledgement generation.
+- `internal/pushsdk`: wire protocol, explicit plaintext/encrypted session mode,
+  configured PBKDF2 digest, challenge lifecycle, AES-CBC encryption, exact
+  event validation, and action-specific acknowledgement generation.
 - `internal/store`: PostgreSQL migrations, terminal state, attendance records,
   operator users, and hashed sessions.
 - `internal/httpapi`: session-authenticated API, static console delivery,
@@ -34,9 +35,9 @@ denied at Nginx and additionally CIDR-checked by Go.
 ## Explicit non-features
 
 There is no secondary receiver, HTTP forwarding path, persistent raw-event
-ledger, event-name remapping, protocol compatibility parser, inferred media
-type, database fallback, or automatic terminal reconfiguration. Those would
-make delivery state ambiguous.
+ledger, event-name remapping, digest auto-detection, protocol compatibility
+parser, inferred media type, database fallback, or automatic terminal
+reconfiguration. Those would make delivery state ambiguous.
 
 Adding a new terminal capability is a schema and protocol change: document the
 vendor wire form, add a migration and tests, then release it. Do not add a

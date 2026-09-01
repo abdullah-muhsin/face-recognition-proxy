@@ -55,7 +55,7 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	var result response
+	var result protocolResponse
 	var params *EncryptionParameters
 	switch action {
 	case "AuthInfo":
@@ -101,17 +101,20 @@ func parseRoute(path string) (serial, action string, ok bool) {
 	return parts[2], parts[9], true
 }
 
-type response struct {
-	Status    int    `json:"status"`
-	Code      string `json:"code"`
-	ErrorMsg  string `json:"errorMsg"`
-	Data      any    `json:"data,omitempty"`
+type protocolResponse struct {
+	Body      any
 	Challenge string
 	session   *Session
 }
 
-func success(data any) response {
-	return response{Status: http.StatusOK, Code: "0x00000000", ErrorMsg: "Succeeded.", Data: data}
+type successResponse struct {
+	Status   int    `json:"status"`
+	Code     string `json:"code"`
+	ErrorMsg string `json:"errorMsg"`
+}
+
+func succeeded() successResponse {
+	return successResponse{Status: http.StatusOK, Code: "0x00000000", ErrorMsg: "Succeeded."}
 }
 
 type authInfoRequest struct {
@@ -120,51 +123,68 @@ type authInfoRequest struct {
 	} `json:"data"`
 }
 
-func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body []byte) (response, error) {
-	encrypted, err := authInfoEncryption(terminal, body)
-	if err != nil {
-		return response{}, err
-	}
-	session, replacedAuthenticated, err := s.sessions.Start(terminal, encrypted)
-	if err != nil {
-		return response{}, fmt.Errorf("create AuthInfo session: %w", err)
-	}
-	if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "authenticating", nil); err != nil {
-		return response{}, err
-	}
-	if replacedAuthenticated {
-		s.metrics.SessionsActive.Dec()
-	}
-	s.hub.Publish(monitor.Event{Kind: "pushsdk.auth_info", Terminal: terminal.SerialNumber, Message: "terminal started authentication", Fields: map[string]any{"encrypted": encrypted, "securityVersion": terminal.Security}})
-	return success(map[string]any{"challenge": session.LoginChallenge, "salt": session.Salt, "iterations": session.Iterations, "isDataEncrypt": encrypted, "securityVersion": []int{3, 4}}), nil
+type authInfoResponse struct {
+	Data authInfoResponseData `json:"data"`
 }
 
-// authInfoEncryption represents the two mutually exclusive protocol modes.
+type authInfoResponseData struct {
+	Challenge        string `json:"challenge"`
+	Salt             string `json:"salt"`
+	Iterations       int    `json:"iterations"`
+	IsDataEncrypted  bool   `json:"isDataEncrypt"`
+	SecurityVersions []int  `json:"securityVersion,omitempty"`
+}
+
+func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body []byte) (protocolResponse, error) {
+	mode, err := payloadModeForAuthInfo(terminal, body)
+	if err != nil {
+		return protocolResponse{}, err
+	}
+	started, err := s.sessions.Start(terminal, mode)
+	if err != nil {
+		return protocolResponse{}, fmt.Errorf("create AuthInfo session: %w", err)
+	}
+	session := started.Session
+	if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "authenticating", nil); err != nil {
+		return protocolResponse{}, err
+	}
+	if started.ReplacedAuthenticatedSession {
+		s.metrics.SessionsActive.Dec()
+	}
+	data := authInfoResponseData{Challenge: session.LoginChallenge, Salt: session.Salt, Iterations: session.Iterations, IsDataEncrypted: mode.IsEncrypted()}
+	if mode.IsEncrypted() {
+		data.SecurityVersions = []int{terminal.SecurityVersion}
+	}
+	s.hub.Publish(monitor.Event{Kind: "pushsdk.auth_info", Terminal: terminal.SerialNumber, Message: "terminal started authentication", Fields: map[string]any{"payloadMode": mode, "securityVersion": terminal.SecurityVersion}})
+	return protocolResponse{Body: authInfoResponse{Data: data}}, nil
+}
+
+// payloadModeForAuthInfo represents the two mutually exclusive protocol modes.
 // A zero-length AuthInfo body is the documented no-negotiation variant: every
 // following payload in that session is JSON without encryption parameters. A
 // non-empty body must be the documented negotiation object and must offer the
 // configured security version; that session then requires encryption for every
 // JSON payload after AuthInfo.
-func authInfoEncryption(terminal config.Terminal, body []byte) (bool, error) {
+func payloadModeForAuthInfo(terminal config.Terminal, body []byte) (PayloadMode, error) {
 	if len(body) == 0 {
-		return false, nil
+		return PlaintextPayload, nil
 	}
 	var payload authInfoRequest
 	if err := decodeExactJSON(body, &payload); err != nil {
-		return false, badRequest("AuthInfo body: %v", err)
+		return "", badRequest("AuthInfo body: %v", err)
 	}
 	if len(payload.Data.SecurityVersions) == 0 {
-		return false, badRequest("AuthInfo must declare securityVersion when it has a body")
+		return "", badRequest("AuthInfo must declare securityVersion when it has a body")
 	}
 	for _, version := range payload.Data.SecurityVersions {
 		if version != 3 && version != 4 {
-			return false, badRequest("AuthInfo securityVersion may contain only 3 or 4")
+			return "", badRequest("AuthInfo securityVersion may contain only 3 or 4")
 		}
-		if version == terminal.Security {
-			return true, nil
+		if version == terminal.SecurityVersion {
+			return EncryptedPayload, nil
 		}
 	}
-	return false, unprocessable("terminal does not offer configured security version")
+	return "", unprocessable("terminal does not offer configured security version")
 }
 
 type loginRequest struct {
@@ -174,82 +194,107 @@ type loginRequest struct {
 	} `json:"data"`
 }
 
-func (s *Service) login(ctx context.Context, terminal config.Terminal, request *http.Request, requestBody []byte) (response, *EncryptionParameters, error) {
+type loginResponse struct {
+	successResponse
+	Data loginResponseData `json:"data"`
+}
+
+type loginResponseData struct {
+	CommandInterval int `json:"commandInterval"`
+	ErrorDelay      int `json:"errorDelay"`
+}
+
+func (s *Service) login(ctx context.Context, terminal config.Terminal, request *http.Request, requestBody []byte) (protocolResponse, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login requires AuthInfo"}
+		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login requires AuthInfo"}
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	if session.LoginExpired(time.Now().UTC()) {
+	if session.LoginChallengeExpired(time.Now().UTC()) {
 		s.sessions.Remove(terminal.PushSDKSerial)
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "AuthInfo challenge has expired"}
+		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "AuthInfo challenge has expired"}
 	}
 	body, params, err := payloadForSession(request, terminal, session, "Login", requestBody, true)
 	if err != nil {
-		return response{}, nil, err
+		return protocolResponse{}, nil, err
 	}
 	var payload loginRequest
 	if err := decodeExactJSON(body, &payload); err != nil {
-		return response{}, nil, badRequest("Login body: %v", err)
+		return protocolResponse{}, nil, badRequest("Login body: %v", err)
 	}
 	if payload.Data.Username != terminal.Username || !constantTimeEqual(payload.Data.LoginPassword, expectedLoginPassword(terminal, session.Salt, session.LoginChallenge, session.Iterations)) {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login credentials are invalid"}
+		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login credentials are invalid"}
 	}
 	next, err := session.IssueNextChallenge()
 	if err != nil {
-		return response{}, nil, err
+		return protocolResponse{}, nil, err
 	}
 	session.Authenticated = true
 	if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "online", nil); err != nil {
-		return response{}, nil, err
+		return protocolResponse{}, nil, err
 	}
 	s.metrics.SessionsActive.Inc()
-	s.hub.Publish(monitor.Event{Kind: "pushsdk.login", Terminal: terminal.SerialNumber, Message: "terminal authenticated", Fields: map[string]any{"encrypted": session.Encrypted, "securityVersion": terminal.Security}})
-	result := success(map[string]any{"commandInterval": terminal.CommandSeconds, "errorDelay": terminal.ErrorDelay})
+	s.hub.Publish(monitor.Event{Kind: "pushsdk.login", Terminal: terminal.SerialNumber, Message: "terminal authenticated", Fields: map[string]any{"payloadMode": session.PayloadMode, "securityVersion": terminal.SecurityVersion}})
+	result := protocolResponse{Body: loginResponse{successResponse: succeeded(), Data: loginResponseData{CommandInterval: terminal.CommandIntervalSeconds, ErrorDelay: terminal.ErrorDelaySeconds}}}
 	result.Challenge = next
 	result.session = session
 	return result, params, nil
 }
 
-func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, action string, request *http.Request, requestBody []byte) (response, *EncryptionParameters, error) {
+type commandRequestResponse struct {
+	successResponse
+	CommandNum int `json:"commandNum"`
+}
+
+type commandResultResponse struct {
+	successResponse
+	IsPendingCommand bool `json:"isPendingCommand"`
+}
+
+type eventResponseItem struct {
+	UUID string `json:"UUID"`
+	successResponse
+}
+
+func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, action string, request *http.Request, requestBody []byte) (protocolResponse, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
+		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if !session.Authenticated {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
+		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
 	}
 	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.NextChallenge)) {
-		return response{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "request authentication header is invalid"}
+		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "request authentication header is invalid"}
 	}
 	requiresBody := action == "CommandResult" || action == "Event"
 	body, params, err := payloadForSession(request, terminal, session, action, requestBody, requiresBody)
 	if err != nil {
-		return response{}, nil, err
+		return protocolResponse{}, nil, err
 	}
-	var result response
+	var result protocolResponse
 	switch action {
 	case "CommandRequest":
 		if len(body) != 0 {
-			return response{}, nil, badRequest("CommandRequest body must be empty")
+			return protocolResponse{}, nil, badRequest("CommandRequest body must be empty")
 		}
-		result = success(map[string]any{"commandNum": 0, "commandList": []any{}})
+		result = protocolResponse{Body: commandRequestResponse{successResponse: succeeded(), CommandNum: 0}}
 	case "CommandResult":
 		if err := validateEmptyCommandResult(body); err != nil {
-			return response{}, nil, err
+			return protocolResponse{}, nil, err
 		}
-		result = success(map[string]any{"isPendingCommand": false})
+		result = protocolResponse{Body: commandResultResponse{successResponse: succeeded(), IsPendingCommand: false}}
 	case "Event":
 		result, err = s.events(ctx, terminal, body)
 		if err != nil {
-			return response{}, nil, err
+			return protocolResponse{}, nil, err
 		}
 	case "Logout":
 		if len(body) != 0 {
-			return response{}, nil, badRequest("Logout body must be empty")
+			return protocolResponse{}, nil, badRequest("Logout body must be empty")
 		}
 		// Keep the key material until this encrypted Logout response is written.
 		// The session is already unauthenticated after this point, and AuthInfo
@@ -257,39 +302,39 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 		session.Authenticated = false
 		s.metrics.SessionsActive.Dec()
 		if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "offline", nil); err != nil {
-			return response{}, nil, err
+			return protocolResponse{}, nil, err
 		}
 		s.hub.Publish(monitor.Event{Kind: "pushsdk.logout", Terminal: terminal.SerialNumber, Message: "terminal logged out"})
-		result = success(nil)
+		result = protocolResponse{Body: succeeded()}
 	}
 	next, err := session.IssueNextChallenge()
 	if err != nil {
-		return response{}, nil, err
+		return protocolResponse{}, nil, err
 	}
 	result.Challenge = next
 	result.session = session
 	return result, params, nil
 }
 
-func (s *Service) events(ctx context.Context, terminal config.Terminal, body []byte) (response, error) {
+func (s *Service) events(ctx context.Context, terminal config.Terminal, body []byte) (protocolResponse, error) {
 	parsed, err := ParseEventBatch(terminal.SerialNumber, body)
 	if err != nil {
 		s.metrics.EventsRejected.Inc()
-		return response{}, err
+		return protocolResponse{}, err
 	}
 	records := make([]store.NewAttendanceRecord, 0, len(parsed))
-	results := make([]map[string]any, 0, len(parsed))
+	results := make([]eventResponseItem, 0, len(parsed))
 	for _, event := range parsed {
 		s.metrics.EventsReceived.WithLabelValues(event.Format).Inc()
 		if event.Attendance != nil {
 			records = append(records, *event.Attendance)
 		}
-		results = append(results, map[string]any{"UUID": event.UUID, "status": http.StatusOK, "code": "0x00000000", "errorMsg": "Succeeded."})
+		results = append(results, eventResponseItem{UUID: event.UUID, successResponse: succeeded()})
 	}
 	inserted, err := s.store.InsertAttendanceBatch(ctx, records)
 	if err != nil {
 		s.metrics.EventsRejected.Inc()
-		return response{}, fmt.Errorf("persist Event batch: %w", err)
+		return protocolResponse{}, fmt.Errorf("persist Event batch: %w", err)
 	}
 	for range inserted {
 		s.metrics.EventsAccepted.Inc()
@@ -301,14 +346,12 @@ func (s *Service) events(ctx context.Context, terminal config.Terminal, body []b
 			s.hub.Publish(monitor.Event{Kind: "pushsdk.event_ignored", Terminal: terminal.SerialNumber, Message: "non-attendance event acknowledged", Fields: map[string]any{"eventId": event.UUID, "format": event.Format, "reason": event.Reason}})
 		}
 	}
-	return success(map[string]any{"eventList": results}), nil
+	return protocolResponse{Body: results}, nil
 }
 
 type commandResult struct {
-	Data struct {
-		CommandNum  int   `json:"commandNum"`
-		CommandList []any `json:"commandList"`
-	} `json:"data"`
+	CommandNum  *int   `json:"commandNum"`
+	CommandList *[]any `json:"commandList"`
 }
 
 func validateEmptyCommandResult(body []byte) error {
@@ -316,7 +359,10 @@ func validateEmptyCommandResult(body []byte) error {
 	if err := decodeExactJSON(body, &payload); err != nil {
 		return badRequest("CommandResult body: %v", err)
 	}
-	if payload.Data.CommandNum != 0 || len(payload.Data.CommandList) != 0 {
+	if payload.CommandNum == nil || payload.CommandList == nil {
+		return badRequest("CommandResult must contain commandNum and commandList")
+	}
+	if *payload.CommandNum != 0 || len(*payload.CommandList) != 0 {
 		return unprocessable("CommandResult is invalid: this gateway does not issue device commands")
 	}
 	return nil
@@ -336,8 +382,8 @@ func encryptionFromRequest(request *http.Request, security int) (EncryptionParam
 }
 
 func payloadForSession(request *http.Request, terminal config.Terminal, session *Session, action string, body []byte, required bool) ([]byte, *EncryptionParameters, error) {
-	if session.Encrypted {
-		params, err := encryptionFromRequest(request, terminal.Security)
+	if session.PayloadMode.IsEncrypted() {
+		params, err := encryptionFromRequest(request, terminal.SecurityVersion)
 		if err != nil {
 			return nil, nil, badRequest("%s encryption parameters: %v", action, err)
 		}
@@ -390,13 +436,8 @@ func decodeExactJSON(body []byte, target any) error {
 	return nil
 }
 
-func (s *Service) respond(writer http.ResponseWriter, terminal config.Terminal, result response, params *EncryptionParameters) error {
-	payload, err := json.Marshal(struct {
-		Status   int    `json:"status"`
-		Code     string `json:"code"`
-		ErrorMsg string `json:"errorMsg"`
-		Data     any    `json:"data,omitempty"`
-	}{result.Status, result.Code, result.ErrorMsg, result.Data})
+func (s *Service) respond(writer http.ResponseWriter, terminal config.Terminal, result protocolResponse, params *EncryptionParameters) error {
+	payload, err := json.Marshal(result.Body)
 	if err != nil {
 		return err
 	}
@@ -425,7 +466,7 @@ func (s *Service) respond(writer http.ResponseWriter, terminal config.Terminal, 
 func (s *Service) respondError(writer http.ResponseWriter, status int, message string) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
-	_ = json.NewEncoder(writer).Encode(response{Status: status, Code: "0xFFFFFFFF", ErrorMsg: message})
+	_ = json.NewEncoder(writer).Encode(successResponse{Status: status, Code: "0xFFFFFFFF", ErrorMsg: message})
 }
 
 func protocolError(err error) (int, string) {

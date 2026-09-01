@@ -42,10 +42,10 @@ func run(logger *slog.Logger) error {
 	if err := data.Migrate(ctx, cfg.MigrationsDir); err != nil {
 		return err
 	}
-	if err := data.SyncTerminals(ctx, cfg.Terminals); err != nil {
+	if err := data.SynchronizeConfiguredTerminals(ctx, cfg.Terminals); err != nil {
 		return err
 	}
-	if err := data.EnsureAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+	if err := data.ReconcileConfiguredOperator(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		return err
 	}
 	if err := data.PurgeExpiredSessions(ctx); err != nil {

@@ -44,13 +44,21 @@ This gateway intentionally accepts only the documented protocol forms:
 - The exact `/iot/{pushSdkSerial}/.../PUSH/{action}` route and `POST` method.
 - `AuthInfo` has two mutually exclusive documented modes: an empty body creates
   a JSON/plaintext session, while an `application/json` negotiation body that
-  offers the configured security version creates an encrypted session.
+  offers the configured security version creates an encrypted session. The
+  response advertises only that configured version; it never claims support for
+  a version the session will reject.
 - A plaintext session permits no query parameters and carries JSON request and
   response bodies. An encrypted session requires exactly `security`, `iv`, and
   `random`; encrypted payloads use `application/octet-stream`.
-- `Login` validates the configured username and PBKDF2 digest. Subsequent
+- `Login` validates the configured username and `loginPasswordDigest` PBKDF2
+  algorithm (`sha1` or `sha256`). The selected algorithm is terminal
+  configuration, not an auto-detected or retry fallback. Subsequent
   actions validate `My-Custom-Auth`, calculated from the previous
   server-issued `My-Custom-Challenge`.
+- `Login` and `Logout` use the standard response envelope. `CommandRequest`
+  and `CommandResult` use their documented top-level command fields, while an
+  `Event` response is the documented top-level per-event result array; they are
+  not wrapped in a generic `data` object.
 - Events use an exact JSON envelope, base64 data, unique vendor UUIDs, and one
   of `jsonData`, `xmlData`, `boundaryData`, or empty `noData`.
 - `boundaryData` must be the documented direct `multipart/form-data` form with
@@ -65,12 +73,14 @@ gateway does not invent labels or normalize vendor values.
 
 1. Copy `config/terminals.json.example` to ignored `config/terminals.json` and
    set the terminal mapping. It contains an environment-variable name, never a
-   password.
-2. Copy `.env.example` to ignored `.env`, set `POSTGRES_PASSWORD`, use a
-   matching `DATABASE_URL`, and set unique operator credentials. Put
-   `PUSHSDK_TERMINAL_PASSWORD` in a separate ignored terminal environment file.
-   For local HTTP testing use `COOKIE_SECURE=false`.
-3. Start `GATEWAY_ENV_FILE=.env TERMINAL_SECRETS_FILE=/path/to/terminal.env TERMINALS_FILE=$PWD/config/terminals.json docker compose up --build`.
+   password. Set `loginPasswordDigest` to the one documented algorithm used by
+   that exact device firmware.
+2. Copy `deploy/production/gateway.env.example` to ignored `.env`, set
+   `POSTGRES_PASSWORD`, use a matching `DATABASE_URL`, and set unique operator
+   credentials. Copy `deploy/production/terminal.env.example` to an ignored
+   file such as `.local-secrets/terminal.env` and set the terminal password. For
+   local HTTP testing explicitly set `COOKIE_SECURE=false`.
+3. Start `GATEWAY_ENV_FILE=$PWD/.env TERMINAL_SECRETS_FILE=$PWD/.local-secrets/terminal.env TERMINALS_FILE=$PWD/config/terminals.json docker compose up --build`.
 4. Open `http://localhost:18080/app/`.
 
 The Compose port is loopback-only. It does not expose PostgreSQL or Prometheus
@@ -91,6 +101,13 @@ First create these VPS files, owned by the deployment account:
 `terminals.json` contains only terminal identifiers, the gateway username, and
 the name of the password environment variable; it must be mode `0644` because
 the non-root gateway process reads its read-only bind mount.
+
+`loginPasswordDigest` is required for every terminal mapping. It is exactly
+`sha256` for standard firmware or `sha1` only where the vendor documentation
+identifies that exact firmware. The gateway performs one configured PBKDF2
+check; it never attempts both values. Earlier mappings used the ambiguous key
+`digest`; rename that key to `loginPasswordDigest` before releasing this
+revision.
 
 Use `deploy/production/gateway.env.example`,
 `deploy/production/terminal.env.example`, and

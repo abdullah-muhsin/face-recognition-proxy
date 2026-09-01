@@ -77,6 +77,18 @@ func TestParseEventBatchRejectsMissingEmployee(t *testing.T) {
 	}
 }
 
+func TestParseEventBatchRequiresTheEntireDocumentedEnvelope(t *testing.T) {
+	if _, err := ParseEventBatch("DEVICE-1", []byte(`{"eventNum":0}`)); err == nil {
+		t.Fatal("eventList must not be inferred when it is absent")
+	}
+	if _, err := ParseEventBatch("DEVICE-1", []byte(`{"eventList":[]}`)); err == nil {
+		t.Fatal("eventNum must not be inferred when it is absent")
+	}
+	if _, err := ParseEventBatch("DEVICE-1", []byte(`{"eventNum":1,"eventList":[{"UUID":"vendor-event-1","dataFormat":"noData"}]}`)); err == nil {
+		t.Fatal("event data must not be inferred when it is absent")
+	}
+}
+
 func envelope(dataFormat, data string) []byte {
 	encoded := base64.StdEncoding.EncodeToString([]byte(data))
 	return []byte(fmt.Sprintf(`{"eventNum":1,"eventList":[{"UUID":"vendor-event-1","dataFormat":%q,"data":%q}]}`, dataFormat, encoded))
