@@ -363,6 +363,13 @@ public sealed partial class PushProtocolHandler
             }
             catch (ProtocolException exception)
             {
+                // Keep the terminal payload out of logs, while recording the
+                // actionable protocol reason for an authenticated request.
+                _logger.LogWarning(
+                    "Rejected authenticated Push SDK request to {Path} from terminal {TerminalSerialNumber}: {Reason}",
+                    context.Request.Path,
+                    terminal.SerialNumber,
+                    exception.Message);
                 reply = ErrorReply(exception.StatusCode, exception.Message);
             }
 
