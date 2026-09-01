@@ -94,12 +94,24 @@ controls, data tables, panels, feedback, and responsive navigation. Its source
 is deliberately split into Overview, Attendance, Terminals, and Live Monitor
 workspaces; it does not render every operational concern on a single screen.
 
+Vue Router uses history-mode paths beneath `/app/`; the gateway serves the Vue
+entry document for those browser routes while continuing to return `404` for
+missing static assets. Pinia owns the authenticated gateway state and monitor
+connection. Vite auto-imports Vue, Vue Router, PrimeVue Toast APIs, and used
+PrimeVue components on demand; `.eslintrc-auto-import.json` is the matching
+tracked ESLint globals contract.
+
 For standalone frontend work, run:
 
 ```bash
 npm --prefix web ci
+npm --prefix web run check
 npm --prefix web run dev
 ```
+
+Run `make test` and `make vet` to verify the Go service with the same Go 1.24
+toolchain used by the production image. They explicitly test the gateway's Go
+source roots so ignored frontend dependencies cannot affect the result.
 
 The Vite server serves the console at `/app/`. For authenticated behaviour,
 run it through the gateway or the local Compose stack so its same-origin API

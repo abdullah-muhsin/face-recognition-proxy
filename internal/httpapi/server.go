@@ -13,7 +13,10 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"path"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -55,7 +58,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/admin/attendance", s.withSession(s.attendance))
 	mux.HandleFunc("GET /ws/v1/monitor", s.withSession(s.monitorSocket))
 	mux.HandleFunc("/", s.redirectRoot)
-	mux.Handle("GET /app/", http.StripPrefix("/app/", http.FileServer(http.Dir(s.config.WebDir))))
+	mux.HandleFunc("GET /app/", s.webApp)
 }
 
 func (s *Server) health(writer http.ResponseWriter, _ *http.Request) {
@@ -79,6 +82,18 @@ func (s *Server) redirectRoot(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	http.Redirect(writer, request, "/app/", http.StatusPermanentRedirect)
+}
+
+// webApp serves static build assets by filename and the Vue entry document for
+// history-mode browser routes. An asset request keeps the file server's normal
+// 404 behavior; only extensionless operator-console paths resolve to index.html.
+func (s *Server) webApp(writer http.ResponseWriter, request *http.Request) {
+	relativePath := strings.TrimPrefix(request.URL.Path, "/app/")
+	if relativePath == "" || path.Ext(relativePath) == "" {
+		http.ServeFile(writer, request, filepath.Join(s.config.WebDir, "index.html"))
+		return
+	}
+	http.StripPrefix("/app/", http.FileServer(http.Dir(s.config.WebDir))).ServeHTTP(writer, request)
 }
 
 type loginInput struct {
