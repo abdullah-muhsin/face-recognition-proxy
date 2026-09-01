@@ -112,6 +112,29 @@ public sealed class AttendanceEventParserTests
     }
 
     [Fact]
+    public void RecordsAnActiveAccessEventWithoutAnAttendanceScheduleStatus()
+    {
+        using var environment = new TestEnvironment();
+        var parser = new AttendanceEventParser(environment.CreateOptions());
+        var raw = Encoding.UTF8.GetBytes("""
+            {
+              "eventType":"AccessControllerEvent",
+              "eventState":"active",
+              "dateTime":"2026-09-01T08:15:30Z",
+              "AccessControllerEvent":{"employeeNoString":"2005","currentVerifyMode":"face"}
+            }
+            """);
+        var body = TestProtocol.BuildEventEnvelope("event-free-attendance-1", "jsonData", raw);
+
+        var parsed = Assert.Single(parser.ParseBatch(TestEnvironment.TerminalSerialNumber, body));
+        var delivery = Assert.IsType<DeliveryEvent>(parsed.Delivery);
+
+        Assert.Equal("2005", delivery.Event.EmployeeNumber);
+        Assert.Equal("undefined", delivery.Event.AttendanceStatus);
+        Assert.Null(delivery.Event.StatusValue);
+    }
+
+    [Fact]
     public void RejectsAnAccessEventMissingItsRequiredEmployeeNumber()
     {
         using var environment = new TestEnvironment();

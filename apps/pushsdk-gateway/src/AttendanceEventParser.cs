@@ -137,7 +137,7 @@ public sealed partial class AttendanceEventParser
                 RequiredElementValue(eventData, "employeeNoString", eventId, 80),
                 OptionalElementValue(eventData, "name", eventId, 160),
                 RequiredElementValue(eventData, "currentVerifyMode", eventId, 80),
-                RequiredElementValue(eventData, "attendanceStatus", eventId, 80),
+                AttendanceStatusOrUndefined(OptionalElementValue(eventData, "attendanceStatus", eventId, 80)),
                 OptionalElementInt(eventData, "statusValue", eventId),
                 false),
             null);
@@ -233,7 +233,7 @@ public sealed partial class AttendanceEventParser
                 RequireString(accessControllerEvent, "employeeNoString", 80),
                 OptionalString(accessControllerEvent, "name", 160),
                 RequireString(accessControllerEvent, "currentVerifyMode", 80),
-                RequireString(accessControllerEvent, "attendanceStatus", 80),
+                AttendanceStatusOrUndefined(OptionalString(accessControllerEvent, "attendanceStatus", 80)),
                 OptionalInt(accessControllerEvent, "statusValue"),
                 picture is not null),
             picture);
@@ -586,6 +586,9 @@ public sealed partial class AttendanceEventParser
 
         return value.GetString();
     }
+
+    private static string AttendanceStatusOrUndefined(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? "undefined" : value;
 
     private static int? OptionalInt(JsonElement objectElement, string property)
     {
