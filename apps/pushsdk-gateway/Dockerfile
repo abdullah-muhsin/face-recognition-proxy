@@ -35,9 +35,10 @@ ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_EnableDiagnostics=0
 
 COPY --from=build /app/publish ./
+COPY docker/entrypoint.sh /usr/local/bin/pushsdk-gateway-entrypoint
 
-USER pushsdk
+RUN chmod 755 /usr/local/bin/pushsdk-gateway-entrypoint
 
 EXPOSE 8080
 
-ENTRYPOINT ["dotnet", "PushSdkGateway.dll"]
+ENTRYPOINT ["/usr/local/bin/pushsdk-gateway-entrypoint"]
