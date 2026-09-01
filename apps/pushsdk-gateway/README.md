@@ -12,7 +12,7 @@ It is deliberately not a terminal-management service. It supports one documented
 POST /iot/{terminal-serial-number}/global/0-global/model/service/operate/PUSH/{AuthInfo,Login,CommandRequest,CommandResult,Event,Logout}
 ```
 
-The `{terminal-serial-number}` segment must be the configured terminal's ISAPI serial number. There is no alternate device-ID mapping, legacy `/PUSHSDK/` route, plaintext HTTP transport, unauthenticated event route, or password-digest fallback. HTTPS is mandatory. When a terminal elects Push SDK security version 3 or 4 for an interaction, the gateway requires that exact negotiated version and encrypts the corresponding response.
+The `{terminal-serial-number}` segment must be the terminal's configured Push SDK route serial number. `SerialNumber` remains the canonical ISAPI identity delivered to Laravel; set `PushSdkSerialNumber` when the terminal uses a shorter protocol identifier. There is no implicit device-ID mapping, legacy `/PUSHSDK/` route, plaintext HTTP transport, unauthenticated event route, or password-digest fallback. HTTPS is mandatory. When a terminal elects Push SDK security version 3 or 4 for an interaction, the gateway requires that exact negotiated version and encrypts the corresponding response.
 
 ## What it guarantees
 
@@ -41,7 +41,7 @@ chmod 600 /home/abdullah/services/secrets/attendance-pushsdk/gateway/runtime.env
 Set the following values before starting the gateway:
 
 - In `runtime.env`, set `PUSHSDK_TERMINAL_PASSWORD` to the exact Push SDK password configured on the terminal. This is a dedicated gateway credential, not the terminal's ISAPI administrator password. Set `ATTENDANCE_PUSH_GATEWAY_TOKEN` to the same 32+-character value used by the Laravel Push SDK receiver.
-- In `gateway.json`, replace `REPLACE_WITH_THE_TERMINAL_SERIAL_NUMBER` with the `<serialNumber>` returned by `GET /ISAPI/System/deviceInfo` on the terminal's local management interface. Keep the username, password-variable name, and `LoginPasswordDigest` aligned with the terminal setting.
+- In `gateway.json`, replace `REPLACE_WITH_THE_TERMINAL_SERIAL_NUMBER` with the `<serialNumber>` returned by `GET /ISAPI/System/deviceInfo` on the terminal's local management interface. Set `PushSdkSerialNumber` to the exact identifier observed in the device's Push SDK URL; omit it only when that URL uses the full ISAPI serial. Keep the username, password-variable name, and `LoginPasswordDigest` aligned with the terminal setting.
 - Register that exact serial number in the Laravel receiver before the terminal sends any events:
 
 ```bash
@@ -101,7 +101,7 @@ For the device running firmware `V4.48.40 build 260629`:
 1. Ensure the terminal has correct time/NTP, a working DNS resolver, and an outbound route to the VPS on TCP 443. It must not need any inbound port forwarding or public ISAPI management port.
 2. In the terminal's Push SDK configuration page, enter the gateway DNS name, `443`, the gateway Push SDK username, and the exact password stored in the protected gateway `runtime.env`. Select the HTTPS Push SDK transport and leave server-certificate verification enabled.
 3. The terminal must trust the certificate served for the configured DNS name. Use a public CA certificate; do not deploy a self-signed certificate or disable certificate verification.
-4. Save the Push SDK configuration and generate a face/card attendance event. The device will construct its Push SDK URL with its own serial number; that value must match `Gateway:Terminals:SerialNumber` and the Laravel terminal registration exactly.
+4. Save the Push SDK configuration and generate a face/card attendance event. The device constructs its Push SDK URL with its protocol serial; that value must match `Gateway:Terminals:PushSdkSerialNumber`. The full ISAPI serial in `Gateway:Terminals:SerialNumber` must match the Laravel terminal registration.
 
 This gateway does not configure WebSocket/WSS, terminal commands, event subscriptions, a media server, or any terminal management API. Those are outside the attendance record flow.
 
@@ -115,4 +115,4 @@ Run these checks in order:
 4. After an attendance event, gateway logs show delivery to the Laravel receiver and the public Laravel dashboard shows exactly one record. Re-sending the same vendor UUID must not create another record.
 5. When the event includes a JPEG, the Laravel record reports its stored picture; when it does not, no picture upload request is attempted.
 
-If the terminal receives a `404`, its Push SDK URL contains a serial number that is not registered in `gateway.json`. An `Invalid SessionID` after AuthInfo indicates that the configured username, password, or explicit digest does not match the terminal. A `Push SDK traffic must arrive through the HTTPS reverse proxy` error means Nginx is not forwarding the required HTTPS header. Correct the configured value; do not add an alternate route or downgrade the transport.
+If the terminal receives a `404`, its Push SDK URL serial does not match `PushSdkSerialNumber` in `gateway.json`. An `Invalid SessionID` after AuthInfo indicates that the configured username, password, or explicit digest does not match the terminal. A `Push SDK traffic must arrive through the HTTPS reverse proxy` error means Nginx is not forwarding the required HTTPS header. Correct the configured value; do not add an alternate route or downgrade the transport.

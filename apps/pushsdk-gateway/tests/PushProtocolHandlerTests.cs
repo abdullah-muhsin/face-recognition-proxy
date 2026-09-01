@@ -12,7 +12,7 @@ public sealed class PushProtocolHandlerTests
     public async Task AuthenticatesAndPersistsAnEncryptedAttendanceEventBeforeAcknowledgingIt()
     {
         using var environment = new TestEnvironment();
-        var options = environment.CreateOptions();
+        var options = environment.CreateOptions(pushSdkSerialNumber: TestEnvironment.PushSdkTerminalSerialNumber);
         options.Validate();
         var database = new GatewayDatabase(options);
         await database.InitializeAsync(CancellationToken.None);
@@ -26,7 +26,7 @@ public sealed class PushProtocolHandlerTests
 
         var authInfo = await handler.AuthenticateInfoAsync(
             CreateContext("application/json", Encoding.UTF8.GetBytes("{\"data\":{\"securityVersion\":[3,4]}}")),
-            TestEnvironment.TerminalSerialNumber,
+            TestEnvironment.PushSdkTerminalSerialNumber,
             CancellationToken.None);
         using var authInfoDocument = JsonDocument.Parse(authInfo.Payload);
         var authData = authInfoDocument.RootElement.GetProperty("data");
@@ -40,7 +40,7 @@ public sealed class PushProtocolHandlerTests
             {
                 data = new { username = TestEnvironment.TerminalUsername, loginPassword },
             })),
-            TestEnvironment.TerminalSerialNumber,
+            TestEnvironment.PushSdkTerminalSerialNumber,
             CancellationToken.None);
         Assert.Equal(200, login.StatusCode);
         challenge = Assert.IsType<string>(login.CustomChallenge);
@@ -59,7 +59,7 @@ public sealed class PushProtocolHandlerTests
         });
         eventContext.Request.Headers["My-Custom-Auth"] = TestProtocol.CalculateCustomAuth(salt, challenge);
 
-        var acknowledgement = await handler.EventAsync(eventContext, TestEnvironment.TerminalSerialNumber, CancellationToken.None);
+        var acknowledgement = await handler.EventAsync(eventContext, TestEnvironment.PushSdkTerminalSerialNumber, CancellationToken.None);
 
         Assert.Equal(200, acknowledgement.StatusCode);
         Assert.NotNull(acknowledgement.Encryption);
@@ -74,6 +74,7 @@ public sealed class PushProtocolHandlerTests
         Assert.Equal("event-encrypted-1", claimed.VendorEventId);
         using var payload = JsonDocument.Parse(claimed.PayloadJson);
         Assert.Equal("attendance.push-sdk.gateway.v1", payload.RootElement.GetProperty("schema").GetString());
+        Assert.Equal(TestEnvironment.TerminalSerialNumber, payload.RootElement.GetProperty("terminal_serial_number").GetString());
         Assert.Equal("1001", payload.RootElement.GetProperty("event").GetProperty("employee_number").GetString());
     }
 

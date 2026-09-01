@@ -9,6 +9,7 @@ internal sealed class TestEnvironment : IDisposable
     public const string LaravelTokenVariable = "PUSHSDK_TEST_LARAVEL_TOKEN";
     public const string TerminalPasswordVariable = "PUSHSDK_TEST_TERMINAL_PASSWORD";
     public const string TerminalSerialNumber = "DS-K1T341CMFW-E1";
+    public const string PushSdkTerminalSerialNumber = "GN0123456";
     public const string TerminalUsername = "attendance_gateway";
     public const string TerminalPassword = "correct-horse-battery";
 
@@ -26,7 +27,7 @@ internal sealed class TestEnvironment : IDisposable
 
     public string DataDirectory { get; }
 
-    public GatewayOptions CreateOptions(bool requireDeviceHttps = false)
+    public GatewayOptions CreateOptions(bool requireDeviceHttps = false, string? pushSdkSerialNumber = null)
     {
         return new GatewayOptions
         {
@@ -41,6 +42,7 @@ internal sealed class TestEnvironment : IDisposable
                 new TerminalOptions
                 {
                     SerialNumber = TerminalSerialNumber,
+                    PushSdkSerialNumber = pushSdkSerialNumber ?? TerminalSerialNumber,
                     Username = TerminalUsername,
                     PasswordEnvironmentVariable = TerminalPasswordVariable,
                     LoginPasswordDigest = "sha256",

@@ -8,6 +8,7 @@
     "Terminals": [
       {
         "SerialNumber": "REPLACE_WITH_THE_TERMINAL_SERIAL_NUMBER",
+        "PushSdkSerialNumber": "REPLACE_WITH_THE_PUSH_SDK_ROUTE_SERIAL_NUMBER",
         "Username": "attendance_gateway",
         "PasswordEnvironmentVariable": "PUSHSDK_TERMINAL_PASSWORD",
         "LoginPasswordDigest": "sha256"

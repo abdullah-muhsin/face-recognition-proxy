@@ -52,6 +52,11 @@ public sealed class GatewayOptions
             terminal.Validate();
         }
 
+        if (Terminals.Select(terminal => terminal.EffectivePushSdkSerialNumber).Distinct(StringComparer.Ordinal).Count() != Terminals.Count)
+        {
+            throw new InvalidOperationException("Gateway:Terminals contains duplicate Push SDK serial numbers.");
+        }
+
         if (CommandIntervalSeconds is < 1 or > 60)
         {
             throw new InvalidOperationException("Gateway:CommandIntervalSeconds must be between 1 and 60.");
@@ -133,17 +138,28 @@ public sealed partial class TerminalOptions
 {
     public string SerialNumber { get; init; } = string.Empty;
 
+    public string PushSdkSerialNumber { get; init; } = string.Empty;
+
     public string Username { get; init; } = string.Empty;
 
     public string PasswordEnvironmentVariable { get; init; } = string.Empty;
 
     public string LoginPasswordDigest { get; init; } = string.Empty;
 
+    public string EffectivePushSdkSerialNumber => string.IsNullOrWhiteSpace(PushSdkSerialNumber)
+        ? SerialNumber
+        : PushSdkSerialNumber;
+
     public void Validate()
     {
         if (!TerminalSerialPattern().IsMatch(SerialNumber))
         {
             throw new InvalidOperationException("Every Gateway:Terminals:SerialNumber must contain only letters, digits, dots, underscores, or hyphens and be at most 160 characters.");
+        }
+
+        if (!TerminalSerialPattern().IsMatch(EffectivePushSdkSerialNumber))
+        {
+            throw new InvalidOperationException("Every Gateway:Terminals:PushSdkSerialNumber must contain only letters, digits, dots, underscores, or hyphens and be at most 160 characters.");
         }
 
         if (string.IsNullOrWhiteSpace(Username) || Username.Length > 64)

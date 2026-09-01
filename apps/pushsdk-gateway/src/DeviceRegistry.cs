@@ -9,10 +9,11 @@ public sealed class DeviceRegistry
         _terminals = options.Terminals
             .Select(terminal => new RegisteredTerminal(
                 terminal.SerialNumber,
+                terminal.EffectivePushSdkSerialNumber,
                 terminal.Username,
                 Environment.GetEnvironmentVariable(terminal.PasswordEnvironmentVariable)!,
                 terminal.LoginPasswordDigest))
-            .ToDictionary(terminal => terminal.SerialNumber, StringComparer.Ordinal);
+            .ToDictionary(terminal => terminal.PushSdkSerialNumber, StringComparer.Ordinal);
     }
 
     public bool TryGet(string serialNumber, out RegisteredTerminal terminal)
@@ -23,6 +24,7 @@ public sealed class DeviceRegistry
 
 public sealed record RegisteredTerminal(
     string SerialNumber,
+    string PushSdkSerialNumber,
     string Username,
     string Password,
     string LoginPasswordDigest);

@@ -77,7 +77,7 @@ public sealed partial class PushProtocolHandler
         }
 
         var session = _sessions.BeginAuthentication(terminal, _options.AuthChallengeIterations, encryptionSecurityVersion);
-        _logger.LogInformation("Push SDK terminal {TerminalSerialNumber} requested authentication information.", terminalSerialNumber);
+        _logger.LogInformation("Push SDK terminal {PushSdkSerialNumber} requested authentication information for canonical terminal {TerminalSerialNumber}.", terminalSerialNumber, terminal.SerialNumber);
         return DeviceReply.FromJson(200, Serialize(new
         {
             data = new
@@ -94,7 +94,8 @@ public sealed partial class PushProtocolHandler
     public async Task<DeviceReply> LoginAsync(HttpContext context, string terminalSerialNumber, CancellationToken cancellationToken)
     {
         RequireDeviceHttps(context.Request);
-        _ = RequireRegisteredTerminal(terminalSerialNumber);
+        var terminal = RequireRegisteredTerminal(terminalSerialNumber);
+        var canonicalTerminalSerialNumber = terminal.SerialNumber;
         RequireNoQuery(context.Request);
         RequireJsonContent(context.Request);
         var body = await ReadBodyAsync(context.Request, true, cancellationToken);
@@ -106,9 +107,9 @@ public sealed partial class PushProtocolHandler
             return LoginFailure(lockStatus);
         }
 
-        if (!_sessions.TryGetAuthenticated(terminalSerialNumber, out var session))
+        if (!_sessions.TryGetAuthenticated(canonicalTerminalSerialNumber, out var session))
         {
-            var unauthenticatedSession = GetSessionForLogin(terminalSerialNumber);
+            var unauthenticatedSession = GetSessionForLogin(canonicalTerminalSerialNumber);
             if (unauthenticatedSession is null)
             {
                 return LoginFailure(LoginLockStatus.Unlocked(5));
@@ -159,7 +160,7 @@ public sealed partial class PushProtocolHandler
             _sessions.RecordLoginSuccess(deviceAddress);
             session.IsAuthenticated = true;
             session.Challenge = PushCrypto.RandomHex(64);
-            _logger.LogInformation("Push SDK terminal {TerminalSerialNumber} authenticated with the configured {PasswordDigest} login digest.", terminalSerialNumber, session.Terminal.LoginPasswordDigest);
+            _logger.LogInformation("Push SDK terminal {PushSdkSerialNumber} authenticated as canonical terminal {TerminalSerialNumber} with the configured {PasswordDigest} login digest.", terminalSerialNumber, canonicalTerminalSerialNumber, session.Terminal.LoginPasswordDigest);
             return DeviceReply.FromJson(200, Serialize(new
             {
                 status = 200,
@@ -185,7 +186,7 @@ public sealed partial class PushProtocolHandler
             terminalSerialNumber,
             requireEmptyBody: true,
             supportsPayloadEncryption: true,
-            async (_, _) =>
+            async (_, _, _) =>
             {
                 await Task.CompletedTask;
                 return DeviceReply.FromJson(200, Serialize(new
@@ -206,7 +207,7 @@ public sealed partial class PushProtocolHandler
             terminalSerialNumber,
             requireEmptyBody: false,
             supportsPayloadEncryption: true,
-            async (body, _) =>
+            async (_, body, _) =>
             {
                 try
                 {
@@ -247,12 +248,12 @@ public sealed partial class PushProtocolHandler
             terminalSerialNumber,
             requireEmptyBody: false,
             supportsPayloadEncryption: true,
-            async (body, _) =>
+            async (terminal, body, _) =>
             {
-                var parsedEvents = _eventParser.ParseBatch(terminalSerialNumber, body);
+                var parsedEvents = _eventParser.ParseBatch(terminal.SerialNumber, body);
                 try
                 {
-                    await _database.PersistEventsAsync(terminalSerialNumber, parsedEvents, DateTimeOffset.UtcNow, cancellationToken);
+                    await _database.PersistEventsAsync(terminal.SerialNumber, parsedEvents, DateTimeOffset.UtcNow, cancellationToken);
                 }
                 catch (SqliteException exception)
                 {
@@ -277,11 +278,11 @@ public sealed partial class PushProtocolHandler
             terminalSerialNumber,
             requireEmptyBody: true,
             supportsPayloadEncryption: false,
-            async (_, _) =>
+            async (terminal, _, _) =>
             {
-                _sessions.Remove(terminalSerialNumber);
+                _sessions.Remove(terminal.SerialNumber);
                 await Task.CompletedTask;
-                _logger.LogInformation("Push SDK terminal {TerminalSerialNumber} logged out.", terminalSerialNumber);
+                _logger.LogInformation("Push SDK terminal {PushSdkSerialNumber} logged out from canonical terminal {TerminalSerialNumber}.", terminalSerialNumber, terminal.SerialNumber);
                 return DeviceReply.FromJson(200, Serialize(new
                 {
                     status = 200,
@@ -297,12 +298,13 @@ public sealed partial class PushProtocolHandler
         string terminalSerialNumber,
         bool requireEmptyBody,
         bool supportsPayloadEncryption,
-        Func<byte[], EncryptionContext?, Task<DeviceReply>> action,
+        Func<RegisteredTerminal, byte[], EncryptionContext?, Task<DeviceReply>> action,
         CancellationToken cancellationToken)
     {
         RequireDeviceHttps(context.Request);
-        _ = RequireRegisteredTerminal(terminalSerialNumber);
-        if (!_sessions.TryGetAuthenticated(terminalSerialNumber, out var session))
+        var terminal = RequireRegisteredTerminal(terminalSerialNumber);
+        var canonicalTerminalSerialNumber = terminal.SerialNumber;
+        if (!_sessions.TryGetAuthenticated(canonicalTerminalSerialNumber, out var session))
         {
             return ErrorReply(401, "Invalid SessionID.");
         }
@@ -357,7 +359,7 @@ public sealed partial class PushProtocolHandler
                     body = PushCrypto.Decrypt(encryption, body);
                 }
 
-                reply = await action(body, encryption);
+                reply = await action(terminal, body, encryption);
             }
             catch (ProtocolException exception)
             {
