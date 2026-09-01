@@ -210,6 +210,7 @@ case "$receiver" in
         host_port="8001"
         image_repository="attendance-receiver-esp32"
         network_name=""
+        edge_network_name=""
         ;;
     pushsdk)
         app_dir="$project_dir/apps/attendance-receiver-pushsdk"
@@ -217,6 +218,10 @@ case "$receiver" in
         host_port="8002"
         image_repository="attendance-receiver-pushsdk"
         network_name="attendance_pushsdk_internal"
+        # Rootless Docker can publish a loopback port only from a non-internal
+        # primary network. The receiver is then also joined to the private
+        # network used exclusively by the Push SDK gateway.
+        edge_network_name="attendance_pushsdk_receiver_edge"
         ;;
     *)
         echo "release-production: unsupported receiver '$receiver'" >&2
@@ -303,8 +308,12 @@ if [ -n "$existing_id" ]; then
             || fail "existing '$container_name' does not use expected mount: $expected_mount"
     done <<< "$expected_mounts"
     existing_port="$(as_deploy docker inspect --format '{{range $port, $bindings := .HostConfig.PortBindings}}{{range $bindings}}{{printf "%s:%s\n" .HostIp .HostPort}}{{end}}{{end}}' "$existing_id")"
-    printf '%s\n' "$existing_port" | grep -Fqx "$bind_address:$host_port" \
-        || fail "existing '$container_name' is not bound to $bind_address:$host_port"
+    if [ -n "$existing_port" ]; then
+        printf '%s\n' "$existing_port" | grep -Fqx "$bind_address:$host_port" \
+            || fail "existing '$container_name' is not bound to $bind_address:$host_port"
+    elif [ -z "$edge_network_name" ]; then
+        fail "existing '$container_name' is not bound to $bind_address:$host_port"
+    fi
 fi
 
 if [ "$fresh_database" = true ]; then
@@ -377,6 +386,13 @@ if [ -n "$network_name" ]; then
     if ! as_deploy docker network inspect "$network_name" >/dev/null 2>&1; then
         as_deploy docker network create --internal "$network_name" >/dev/null
     fi
+fi
+if [ -n "$edge_network_name" ]; then
+    if ! as_deploy docker network inspect "$edge_network_name" >/dev/null 2>&1; then
+        as_deploy docker network create "$edge_network_name" >/dev/null
+    fi
+    docker_network_args=(--network "$edge_network_name")
+elif [ -n "$network_name" ]; then
     docker_network_args=(--network "$network_name")
 fi
 
@@ -448,6 +464,10 @@ as_deploy docker run --detach \
     --volume "$storage_dir:/var/www/html/storage" \
     "$image_tag" >/dev/null
 new_container_started=true
+
+if [ -n "$network_name" ] && [ -n "$edge_network_name" ]; then
+    as_deploy docker network connect "$network_name" "$container_name"
+fi
 
 deadline=$((SECONDS + 120))
 while [ "$SECONDS" -lt "$deadline" ]; do

@@ -49,7 +49,7 @@ The Compose project creates the internal `attendance_pushsdk_internal` network a
 
 Deploy the terminal-facing gateway separately, using its [gateway guide](/home/magnet/services/face-recognition-proxy/apps/pushsdk-gateway/README.md). It owns the Push SDK session and only sends canonical records to this application.
 
-Use [the Push SDK Nginx template](/home/magnet/services/face-recognition-proxy/deploy/nginx/attendance-receiver-pushsdk.conf) for the demo dashboard. The production release command uses its own runtime directory and container:
+Use [the Push SDK gateway Nginx template](/home/magnet/services/face-recognition-proxy/deploy/nginx/pushsdk-gateway.conf) for the shared TLS hostname: `/iot/` remains reserved for terminal protocol traffic, and `/` serves the dashboard while denying the receiver's private API. The production release command uses its own runtime directory and container:
 
 ```bash
 ./scripts/release-production.sh \
@@ -57,4 +57,4 @@ Use [the Push SDK Nginx template](/home/magnet/services/face-recognition-proxy/d
   --dry-run
 ```
 
-The default production port is `127.0.0.1:8002`.
+The default production port is `127.0.0.1:8002`; it is loopback-only. On the current VPS, the dashboard is reached through `https://vps.itplus.club/`, not by exposing that port directly.
