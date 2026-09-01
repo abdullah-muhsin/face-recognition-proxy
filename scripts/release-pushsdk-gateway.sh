@@ -6,16 +6,17 @@ usage() {
 Release the Hikvision Push SDK gateway to the Aruvo production VPS.
 
 Usage:
-  scripts/release-pushsdk-gateway.sh --project-dir PATH [options]
-
-Required:
-  --project-dir PATH      Absolute path for this repository's VPS checkout.
+  scripts/release-pushsdk-gateway.sh [options]
 
 Options:
   --host SSH_TARGET       SSH target (default: vps-aruvo).
   --deploy-user USER      VPS user that owns rootless Docker (default: abdullah).
-  --runtime-dir PATH      Existing gateway runtime directory (default:
-                          /home/DEPLOY_USER/pushsdk-gateway-runtime).
+  --project-dir PATH      Absolute path for this repository's VPS checkout
+                          (default: /home/DEPLOY_USER/services/apps/face-recognition-proxy).
+  --runtime-dir PATH      Existing persistent gateway-state directory (default:
+                          /home/DEPLOY_USER/services/runtime/attendance-pushsdk/gateway).
+  --secrets-dir PATH      Existing directory containing runtime.env and gateway.json
+                          (default: /home/DEPLOY_USER/services/secrets/attendance-pushsdk/gateway).
   --branch NAME           Git branch to release (default: main).
   --bootstrap             Permit the one-time clone when --project-dir does not
                           yet exist. Existing gateway data is retained.
@@ -23,12 +24,13 @@ Options:
                           do not change the checkout, image, or container.
   -h, --help              Show this help text.
 
-The runtime directory must already contain:
+The secrets directory must already contain:
   runtime.env             Gateway environment variables, mode 600.
   gateway.json            Gateway configuration, mode 600.
 
-The gateway outbox is stored in the rootless-Docker volume
-`pushsdk_gateway_data`. This command never recreates or clears that volume.
+The runtime directory must already contain a `data` directory. The gateway
+outbox is bind-mounted there, so it remains visible to the VPS backup process.
+This command never recreates or clears that directory.
 It builds the new image before stopping the live gateway and retains the prior
 container as a stopped rollback candidate.
 USAGE
@@ -38,6 +40,7 @@ ssh_target="${ARUVO_SSH_TARGET:-vps-aruvo}"
 deploy_user="${ARUVO_DEPLOY_USER:-abdullah}"
 project_dir="${ARUVO_PROJECT_DIR:-}"
 runtime_dir="${ARUVO_PUSHSDK_GATEWAY_RUNTIME_DIR:-}"
+secrets_dir="${ARUVO_PUSHSDK_GATEWAY_SECRETS_DIR:-}"
 branch="${ARUVO_RELEASE_BRANCH:-main}"
 bootstrap=false
 dry_run=false
@@ -71,6 +74,11 @@ while [ "$#" -gt 0 ]; do
             runtime_dir="$2"
             shift 2
             ;;
+        --secrets-dir)
+            require_value "$@"
+            secrets_dir="$2"
+            shift 2
+            ;;
         --branch)
             require_value "$@"
             branch="$2"
@@ -96,18 +104,20 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-[ -n "$project_dir" ] || {
-    echo "--project-dir is required." >&2
-    usage >&2
-    exit 2
-}
-
-if [ -z "$runtime_dir" ]; then
-    runtime_dir="/home/$deploy_user/pushsdk-gateway-runtime"
+if [ -z "$project_dir" ]; then
+    project_dir="/home/$deploy_user/services/apps/face-recognition-proxy"
 fi
 
-if [[ "$project_dir" != /* ]] || [[ "$runtime_dir" != /* ]]; then
-    echo "--project-dir and --runtime-dir must be absolute VPS paths." >&2
+if [ -z "$runtime_dir" ]; then
+    runtime_dir="/home/$deploy_user/services/runtime/attendance-pushsdk/gateway"
+fi
+
+if [ -z "$secrets_dir" ]; then
+    secrets_dir="/home/$deploy_user/services/secrets/attendance-pushsdk/gateway"
+fi
+
+if [[ "$project_dir" != /* ]] || [[ "$runtime_dir" != /* ]] || [[ "$secrets_dir" != /* ]]; then
+    echo "--project-dir, --runtime-dir, and --secrets-dir must be absolute VPS paths." >&2
     exit 2
 fi
 
@@ -117,7 +127,7 @@ is_safe_remote_argument() {
     [[ "$1" =~ ^[A-Za-z0-9._/@:+,=-]+$ ]]
 }
 
-for value in "$deploy_user" "$project_dir" "$runtime_dir" "$branch"; do
+for value in "$deploy_user" "$project_dir" "$runtime_dir" "$secrets_dir" "$branch"; do
     if ! is_safe_remote_argument "$value"; then
         echo "Unsupported character in a remote argument: $value" >&2
         exit 2
@@ -134,23 +144,24 @@ is_safe_remote_argument "$origin_url" \
 echo "Releasing the Push SDK gateway from '$branch' to '$ssh_target' as '$deploy_user'"
 
 ssh -- "$ssh_target" bash -s -- \
-    "$deploy_user" "$project_dir" "$runtime_dir" "$branch" "$origin_url" "$bootstrap" "$dry_run" <<'REMOTE_SCRIPT'
+    "$deploy_user" "$project_dir" "$runtime_dir" "$secrets_dir" "$branch" "$origin_url" "$bootstrap" "$dry_run" <<'REMOTE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
 deploy_user="$1"
 project_dir="$2"
 runtime_dir="$3"
-branch="$4"
-origin_url="$5"
-bootstrap="$6"
-dry_run="$7"
+secrets_dir="$4"
+branch="$5"
+origin_url="$6"
+bootstrap="$7"
+dry_run="$8"
 
 app_dir="$project_dir/apps/pushsdk-gateway"
-runtime_env="$runtime_dir/runtime.env"
-config_file="$runtime_dir/gateway.json"
+data_dir="$runtime_dir/data"
+runtime_env="$secrets_dir/runtime.env"
+config_file="$secrets_dir/gateway.json"
 container_name="pushsdk_gateway"
-data_volume="pushsdk_gateway_data"
 network_name="attendance_pushsdk_internal"
 edge_network_name="pushsdk_gateway_edge"
 bind_address="127.0.0.1"
@@ -192,6 +203,8 @@ validate_private_file() {
 }
 
 [ -d "$runtime_dir" ] || fail "runtime directory not found: $runtime_dir"
+[ -d "$data_dir" ] || fail "gateway data directory not found: $data_dir"
+[ -d "$secrets_dir" ] || fail "secrets directory not found: $secrets_dir"
 validate_private_file "$runtime_env" "runtime environment file"
 validate_private_file "$config_file" "gateway configuration file"
 as_deploy docker version >/dev/null 2>&1 || fail "rootless Docker is unavailable for '$deploy_user'"
@@ -203,9 +216,9 @@ if [ -n "$existing_id" ]; then
     existing_port="$(as_deploy docker inspect --format '{{range $port, $bindings := .HostConfig.PortBindings}}{{range $bindings}}{{printf "%s:%s\n" .HostIp .HostPort}}{{end}}{{end}}' "$existing_id")"
     printf '%s\n' "$existing_port" | grep -Fqx "$bind_address:$host_port" \
         || fail "existing '$container_name' is not bound to $bind_address:$host_port"
-    existing_volume="$(as_deploy docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/pushsdk-gateway"}}{{.Name}}{{end}}{{end}}' "$existing_id")"
-    [ "$existing_volume" = "$data_volume" ] \
-        || fail "existing '$container_name' does not use expected data volume '$data_volume'"
+    existing_data_dir="$(as_deploy docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/pushsdk-gateway"}}{{.Source}}{{end}}{{end}}' "$existing_id")"
+    [ "$existing_data_dir" = "$data_dir" ] \
+        || fail "existing '$container_name' does not use expected gateway data directory '$data_dir'"
     existing_config="$(as_deploy docker inspect --format '{{range .Mounts}}{{if eq .Destination "/etc/pushsdk-gateway/gateway.json"}}{{.Source}}{{end}}{{end}}' "$existing_id")"
     [ "$existing_config" = "$config_file" ] \
         || fail "existing '$container_name' does not use expected configuration file '$config_file'"
@@ -254,7 +267,7 @@ if [ "$dry_run" = true ]; then
     current_commit="$(as_deploy git -C "$project_dir" rev-parse HEAD)"
     echo "Dry run passed. VPS commit: $current_commit"
     echo "Origin commit:  $origin_commit"
-    echo "The existing '$data_volume' outbox volume will be retained."
+    echo "The existing gateway outbox in '$data_dir' will be retained."
     exit 0
 fi
 
@@ -275,16 +288,12 @@ fi
 if ! as_deploy docker network inspect "$edge_network_name" >/dev/null 2>&1; then
     as_deploy docker network create "$edge_network_name" >/dev/null
 fi
-if ! as_deploy docker volume inspect "$data_volume" >/dev/null 2>&1; then
-    as_deploy docker volume create "$data_volume" >/dev/null
-fi
-
 # The application runs as the unprivileged `pushsdk` user. Initializing the
-# named volume separately preserves that model while allowing a new volume to
-# be used by the rootless Docker engine.
+# bind-mounted directory separately preserves that model while keeping the
+# durable outbox visible in the VPS runtime hierarchy.
 as_deploy docker run --rm \
     --user 0:0 \
-    --volume "$data_volume:/var/lib/pushsdk-gateway" \
+    --volume "$data_dir:/var/lib/pushsdk-gateway" \
     --entrypoint chown \
     "$image_tag" \
     --recursive pushsdk:pushsdk /var/lib/pushsdk-gateway
@@ -321,7 +330,7 @@ as_deploy docker run --detach \
     --env PUSHSDK_GATEWAY_CONFIG_PATH=/etc/pushsdk-gateway/gateway.json \
     --publish "$bind_address:$host_port:8080" \
     --network "$edge_network_name" \
-    --volume "$data_volume:/var/lib/pushsdk-gateway" \
+    --volume "$data_dir:/var/lib/pushsdk-gateway" \
     --volume "$config_file:/etc/pushsdk-gateway/gateway.json:ro" \
     "$image_tag" >/dev/null
 new_container_started=true

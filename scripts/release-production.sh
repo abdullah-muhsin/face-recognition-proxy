@@ -6,17 +6,22 @@ usage() {
 Release a selected attendance receiver demo to the Aruvo production VPS.
 
 Usage:
-  scripts/release-production.sh --receiver esp32|pushsdk --project-dir PATH [options]
+  scripts/release-production.sh --receiver esp32|pushsdk [options]
 
 Required:
   --receiver NAME         `esp32` or `pushsdk`.
-  --project-dir PATH      Absolute path for this repository's VPS checkout.
+  --project-dir PATH      Absolute path for this repository's VPS checkout
+                          (default: /home/DEPLOY_USER/services/apps/face-recognition-proxy).
 
 Options:
   --host SSH_TARGET       SSH target (default: vps-aruvo).
   --deploy-user USER      VPS user that owns rootless Docker (default: abdullah).
-  --runtime-dir PATH      Existing data/config directory
-                          (default: receiver-specific directory under the deploy user home).
+  --runtime-dir PATH      Existing receiver-state directory (default:
+                          receiver-specific directory under
+                          /home/DEPLOY_USER/services/runtime).
+  --secrets-dir PATH      Existing directory containing runtime.env (default:
+                          receiver-specific directory under
+                          /home/DEPLOY_USER/services/secrets).
   --branch NAME           Git branch to release (default: main).
   --bootstrap             Permit the one-time clone when --project-dir does not
                           yet exist. The existing runtime data is retained.
@@ -29,7 +34,7 @@ Options:
 
 Environment equivalents:
   ARUVO_SSH_TARGET, ARUVO_DEPLOY_USER, ARUVO_PROJECT_DIR,
-  ARUVO_RUNTIME_DIR, ARUVO_RELEASE_BRANCH, ARUVO_RECEIVER
+  ARUVO_RUNTIME_DIR, ARUVO_SECRETS_DIR, ARUVO_RELEASE_BRANCH, ARUVO_RECEIVER
 
 The script builds a new image before stopping the selected live container.
 It validates and reuses the existing data and storage bind mounts, then starts
@@ -43,6 +48,7 @@ ssh_target="${ARUVO_SSH_TARGET:-vps-aruvo}"
 deploy_user="${ARUVO_DEPLOY_USER:-abdullah}"
 project_dir="${ARUVO_PROJECT_DIR:-}"
 runtime_dir="${ARUVO_RUNTIME_DIR:-}"
+secrets_dir="${ARUVO_SECRETS_DIR:-}"
 branch="${ARUVO_RELEASE_BRANCH:-main}"
 receiver="${ARUVO_RECEIVER:-}"
 bootstrap=false
@@ -81,6 +87,11 @@ while [ "$#" -gt 0 ]; do
         --runtime-dir)
             require_value "$@"
             runtime_dir="$2"
+            shift 2
+            ;;
+        --secrets-dir)
+            require_value "$@"
+            secrets_dir="$2"
             shift 2
             ;;
         --branch)
@@ -123,17 +134,33 @@ case "$receiver" in
 esac
 
 if [ -z "$project_dir" ]; then
-    echo "--project-dir is required." >&2
-    usage >&2
-    exit 2
+    project_dir="/home/$deploy_user/services/apps/face-recognition-proxy"
 fi
 
 if [ -z "$runtime_dir" ]; then
-    runtime_dir="/home/$deploy_user/attendance-receiver-$receiver-runtime"
+    case "$receiver" in
+        esp32)
+            runtime_dir="/home/$deploy_user/services/runtime/attendance-esp32"
+            ;;
+        pushsdk)
+            runtime_dir="/home/$deploy_user/services/runtime/attendance-pushsdk/receiver"
+            ;;
+    esac
 fi
 
-if [[ "$project_dir" != /* ]] || [[ "$runtime_dir" != /* ]]; then
-    echo "--project-dir and --runtime-dir must be absolute VPS paths." >&2
+if [ -z "$secrets_dir" ]; then
+    case "$receiver" in
+        esp32)
+            secrets_dir="/home/$deploy_user/services/secrets/attendance-esp32"
+            ;;
+        pushsdk)
+            secrets_dir="/home/$deploy_user/services/secrets/attendance-pushsdk/receiver"
+            ;;
+    esac
+fi
+
+if [[ "$project_dir" != /* ]] || [[ "$runtime_dir" != /* ]] || [[ "$secrets_dir" != /* ]]; then
+    echo "--project-dir, --runtime-dir, and --secrets-dir must be absolute VPS paths." >&2
     exit 2
 fi
 
@@ -143,7 +170,7 @@ is_safe_remote_argument() {
     [[ "$1" =~ ^[A-Za-z0-9._/@:+,=-]+$ ]]
 }
 
-for value in "$deploy_user" "$project_dir" "$runtime_dir" "$branch" "$receiver"; do
+for value in "$deploy_user" "$project_dir" "$runtime_dir" "$secrets_dir" "$branch" "$receiver"; do
     if ! is_safe_remote_argument "$value"; then
         echo "Unsupported character in a remote argument: $value" >&2
         exit 2
@@ -160,7 +187,7 @@ is_safe_remote_argument "$origin_url" \
 echo "Releasing '$receiver' receiver from '$branch' to '$ssh_target' as '$deploy_user'"
 
 ssh -- "$ssh_target" bash -s -- \
-    "$deploy_user" "$project_dir" "$runtime_dir" "$branch" "$receiver" \
+    "$deploy_user" "$project_dir" "$runtime_dir" "$secrets_dir" "$branch" "$receiver" \
     "$origin_url" "$bootstrap" "$fresh_database" "$dry_run" <<'REMOTE_SCRIPT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -168,12 +195,13 @@ set -Eeuo pipefail
 deploy_user="$1"
 project_dir="$2"
 runtime_dir="$3"
-branch="$4"
-receiver="$5"
-origin_url="$6"
-bootstrap="$7"
-fresh_database="$8"
-dry_run="$9"
+secrets_dir="$4"
+branch="$5"
+receiver="$6"
+origin_url="$7"
+bootstrap="$8"
+fresh_database="$9"
+dry_run="${10}"
 
 case "$receiver" in
     esp32)
@@ -196,7 +224,7 @@ case "$receiver" in
         ;;
 esac
 
-runtime_env="$runtime_dir/runtime.env"
+runtime_env="$secrets_dir/runtime.env"
 data_dir="$runtime_dir/data"
 storage_dir="$runtime_dir/storage"
 database_file="$data_dir/database.sqlite"
@@ -252,10 +280,13 @@ restore_fresh_database_backup() {
 }
 
 [ -d "$runtime_dir" ] || fail "runtime directory not found: $runtime_dir"
+[ -d "$secrets_dir" ] || fail "secrets directory not found: $secrets_dir"
 [ -d "$data_dir" ] || fail "data directory not found: $data_dir"
 [ -d "$storage_dir" ] || fail "storage directory not found: $storage_dir"
 [ -f "$runtime_env" ] || fail "runtime environment file not found: $runtime_env"
 [ -r "$runtime_env" ] || fail "runtime environment file is not readable: $runtime_env"
+[ "$(as_deploy stat --format '%a' "$runtime_env")" = 600 ] \
+    || fail "runtime environment file must have mode 600: $runtime_env"
 as_deploy docker version >/dev/null 2>&1 || fail "rootless Docker is unavailable for '$deploy_user'"
 
 expected_mounts="$(printf '%s\n%s\n' \

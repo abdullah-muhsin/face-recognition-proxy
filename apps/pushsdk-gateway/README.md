@@ -28,11 +28,14 @@ The `{terminal-serial-number}` segment must be the configured terminal's ISAPI s
 Copy the two templates outside Git-tracked paths and protect both files with mode `600`:
 
 ```bash
-install -d -m 700 /home/abdullah/pushsdk-gateway-runtime
-cp apps/pushsdk-gateway/.env.example /home/abdullah/pushsdk-gateway-runtime/runtime.env
-cp apps/pushsdk-gateway/docker/gateway.json.example /home/abdullah/pushsdk-gateway-runtime/gateway.json
-chmod 600 /home/abdullah/pushsdk-gateway-runtime/runtime.env \
-  /home/abdullah/pushsdk-gateway-runtime/gateway.json
+install -d -m 700 /home/abdullah/services/secrets/attendance-pushsdk/gateway
+install -d -m 700 /home/abdullah/services/runtime/attendance-pushsdk/gateway/data
+cp apps/pushsdk-gateway/.env.example \
+  /home/abdullah/services/secrets/attendance-pushsdk/gateway/runtime.env
+cp apps/pushsdk-gateway/docker/gateway.json.example \
+  /home/abdullah/services/secrets/attendance-pushsdk/gateway/gateway.json
+chmod 600 /home/abdullah/services/secrets/attendance-pushsdk/gateway/runtime.env \
+  /home/abdullah/services/secrets/attendance-pushsdk/gateway/gateway.json
 ```
 
 Set the following values before starting the gateway:
@@ -48,7 +51,7 @@ docker exec attendance_receiver_pushsdk php artisan attendance:terminal:register
   --time-zone="Asia/Baghdad"
 ```
 
-`DataDirectory` must remain `/var/lib/pushsdk-gateway` in the container. The named `pushsdk_gateway_data` volume holds the SQLite outbox and must be retained across releases.
+`DataDirectory` must remain `/var/lib/pushsdk-gateway` in the container. On the VPS, the SQLite outbox is bind-mounted from `/home/abdullah/services/runtime/attendance-pushsdk/gateway/data` and must be retained across releases. Local Compose uses its named `pushsdk_gateway_data` volume by default.
 
 ## Local Compose run
 
@@ -74,15 +77,13 @@ docker compose --project-directory apps/pushsdk-gateway ps
 
 ## VPS release
 
-Use the receiver release first, then deploy this gateway. The gateway release command verifies that the runtime files have mode `600`, preserves `pushsdk_gateway_data`, creates the shared internal Docker network if it is missing, builds before stopping the active container, and retains the old container for rollback.
+Use the receiver release first, then deploy this gateway. The release commands default to the VPS `services/` hierarchy. The gateway release command verifies that secret files have mode `600`, preserves the bind-mounted outbox, creates the shared internal Docker network if it is missing, builds before stopping the active container, and retains the old container for rollback.
 
 ```bash
 ./scripts/release-production.sh \
-  --receiver pushsdk \
-  --project-dir /home/abdullah/face-recognition-proxy
+  --receiver pushsdk
 
-./scripts/release-pushsdk-gateway.sh \
-  --project-dir /home/abdullah/face-recognition-proxy
+./scripts/release-pushsdk-gateway.sh
 ```
 
 Use `--dry-run` before a production release. Do not use a “fresh database” operation for this gateway: its SQLite database is the durable delivery outbox.
@@ -98,7 +99,7 @@ Nginx is the only process exposed on port 443. It injects both `X-Forwarded-Prot
 For the device running firmware `V4.48.40 build 260629`:
 
 1. Ensure the terminal has correct time/NTP, a working DNS resolver, and an outbound route to the VPS on TCP 443. It must not need any inbound port forwarding or public ISAPI management port.
-2. In the terminal's Push SDK configuration page, enter the gateway DNS name, `443`, the gateway Push SDK username, and the exact password stored in `runtime.env`. Select the HTTPS Push SDK transport and leave server-certificate verification enabled.
+2. In the terminal's Push SDK configuration page, enter the gateway DNS name, `443`, the gateway Push SDK username, and the exact password stored in the protected gateway `runtime.env`. Select the HTTPS Push SDK transport and leave server-certificate verification enabled.
 3. The terminal must trust the certificate served for the configured DNS name. Use a public CA certificate; do not deploy a self-signed certificate or disable certificate verification.
 4. Save the Push SDK configuration and generate a face/card attendance event. The device will construct its Push SDK URL with its own serial number; that value must match `Gateway:Terminals:SerialNumber` and the Laravel terminal registration exactly.
 

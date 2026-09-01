@@ -54,7 +54,6 @@ Use [the Push SDK Nginx template](/home/magnet/services/face-recognition-proxy/d
 ```bash
 ./scripts/release-production.sh \
   --receiver pushsdk \
-  --project-dir /home/abdullah/face-recognition-proxy \
   --dry-run
 ```
 
