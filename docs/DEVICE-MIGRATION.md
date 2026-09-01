@@ -29,10 +29,13 @@ online registration before continuing.
    terminal initially reads `offline`.
 3. Enable PushSDK on the terminal. The live monitor must show `auth_info` then
    `login`; terminal status becomes `online`.
-4. Perform one face/card attendance action. Confirm a single
-   `attendance.received` monitor event and one row in the console.
-5. Trigger the same vendor event retry if the terminal supports it. The row
-   total must remain unchanged because of UUID deduplication.
+4. Trigger any device event, such as a face/card verification or door action.
+   Confirm a single `device.event_persisted` monitor event and one row in Device
+   Events. Inspect its payload and confirm the source `eventList.data` value is
+   present unchanged.
+5. Trigger the same vendor event retry if the terminal supports it. The monitor
+   must show `device.event_duplicate` and the row total must remain unchanged
+   because of UUID deduplication.
 6. Inspect Prometheus from the private host path. Confirm request/event counters
    move and no rejected-event counter increases.
 7. Test a terminal logout/reconnect and a gateway restart. The console must show

@@ -322,29 +322,25 @@ func (s *Service) events(ctx context.Context, terminal config.Terminal, body []b
 		s.metrics.EventsRejected.Inc()
 		return protocolResponse{}, err
 	}
-	records := make([]store.NewAttendanceRecord, 0, len(parsed))
+	events := make([]store.NewDeviceEvent, 0, len(parsed))
 	results := make([]eventResponseItem, 0, len(parsed))
 	for _, event := range parsed {
 		s.metrics.EventsReceived.WithLabelValues(event.Format).Inc()
-		if event.Attendance != nil {
-			records = append(records, *event.Attendance)
-		}
+		events = append(events, event.Record)
 		results = append(results, eventResponseItem{UUID: event.UUID, successResponse: succeeded()})
 	}
-	inserted, err := s.store.InsertAttendanceBatch(ctx, records)
+	inserted, err := s.store.InsertDeviceEventBatch(ctx, events)
 	if err != nil {
 		s.metrics.EventsRejected.Inc()
 		return protocolResponse{}, fmt.Errorf("persist Event batch: %w", err)
 	}
-	for range inserted {
-		s.metrics.EventsAccepted.Inc()
-	}
-	for _, event := range parsed {
-		if event.Attendance != nil {
-			s.hub.Publish(monitor.Event{Kind: "attendance.received", Terminal: terminal.SerialNumber, Message: "attendance record persisted", Fields: map[string]any{"eventId": event.UUID, "format": event.Format, "employeeNumber": event.Attendance.EmployeeNumber}})
-		} else {
-			s.hub.Publish(monitor.Event{Kind: "pushsdk.event_ignored", Terminal: terminal.SerialNumber, Message: "non-attendance event acknowledged", Fields: map[string]any{"eventId": event.UUID, "format": event.Format, "reason": event.Reason}})
+	for index, event := range parsed {
+		if inserted[index] {
+			s.metrics.EventsPersisted.Inc()
+			s.hub.Publish(monitor.Event{Kind: "device.event_persisted", Terminal: terminal.SerialNumber, Message: "device event payload persisted", Fields: map[string]any{"eventId": event.UUID, "dataFormat": event.Format}})
+			continue
 		}
+		s.hub.Publish(monitor.Event{Kind: "device.event_duplicate", Terminal: terminal.SerialNumber, Message: "device event payload was already retained", Fields: map[string]any{"eventId": event.UUID, "dataFormat": event.Format}})
 	}
 	return protocolResponse{Body: results}, nil
 }

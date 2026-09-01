@@ -13,12 +13,12 @@ export const useGatewayStore = defineStore('gateway', () => {
   const operatorName = ref('')
   const initializing = ref(false)
   const refreshing = ref(false)
-  const recordsLoading = ref(false)
+  const eventsLoading = ref(false)
   const bootstrapError = ref('')
-  const overview = ref({ attendanceTotal: 0, terminals: [] })
-  const records = ref([])
-  const recordsTotal = ref(0)
-  const attendanceOffset = ref(0)
+  const overview = ref({ deviceEventTotal: 0, terminals: [] })
+  const deviceEvents = ref([])
+  const deviceEventsTotal = ref(0)
+  const deviceEventsOffset = ref(0)
   const monitor = ref([])
   const socketState = ref('disconnected')
   const lastUpdatedAt = ref(null)
@@ -59,24 +59,28 @@ export const useGatewayStore = defineStore('gateway', () => {
     overview.value = await request('/api/v1/admin/overview')
   }
 
-  async function loadAttendance(offset = attendanceOffset.value) {
-    recordsLoading.value = true
+  async function loadDeviceEvents(offset = deviceEventsOffset.value) {
+    eventsLoading.value = true
     try {
       const page = await request(
-        `/api/v1/admin/attendance?limit=${pageSize}&offset=${offset}`,
+        `/api/v1/admin/events?limit=${pageSize}&offset=${offset}`,
       )
-      attendanceOffset.value = offset
-      records.value = page.records
-      recordsTotal.value = page.total
+      deviceEventsOffset.value = offset
+      deviceEvents.value = page.events
+      deviceEventsTotal.value = page.total
     } finally {
-      recordsLoading.value = false
+      eventsLoading.value = false
     }
+  }
+
+  function loadDeviceEventPayload(id) {
+    return request(`/api/v1/admin/events/${id}/payload`)
   }
 
   async function refresh() {
     refreshing.value = true
     try {
-      await Promise.all([loadOverview(), loadAttendance()])
+      await Promise.all([loadOverview(), loadDeviceEvents()])
       lastUpdatedAt.value = new Date()
     } finally {
       refreshing.value = false
@@ -181,7 +185,7 @@ export const useGatewayStore = defineStore('gateway', () => {
       monitor.value.unshift(event)
       monitor.value = monitor.value.slice(0, monitorLimit)
       if (
-        ['attendance.received', 'pushsdk.login', 'pushsdk.logout'].includes(
+        ['device.event_persisted', 'pushsdk.login', 'pushsdk.logout'].includes(
           event.kind,
         )
       )
@@ -210,10 +214,10 @@ export const useGatewayStore = defineStore('gateway', () => {
     disconnectMonitor()
     authenticated.value = false
     operatorName.value = ''
-    overview.value = { attendanceTotal: 0, terminals: [] }
-    records.value = []
-    recordsTotal.value = 0
-    attendanceOffset.value = 0
+    overview.value = { deviceEventTotal: 0, terminals: [] }
+    deviceEvents.value = []
+    deviceEventsTotal.value = 0
+    deviceEventsOffset.value = 0
     monitor.value = []
     lastUpdatedAt.value = null
   }
@@ -229,12 +233,12 @@ export const useGatewayStore = defineStore('gateway', () => {
     operatorName,
     initializing,
     refreshing,
-    recordsLoading,
+    eventsLoading,
     bootstrapError,
     overview,
-    records,
-    recordsTotal,
-    attendanceOffset,
+    deviceEvents,
+    deviceEventsTotal,
+    deviceEventsOffset,
     monitor,
     socketState,
     lastUpdatedAt,
@@ -245,7 +249,8 @@ export const useGatewayStore = defineStore('gateway', () => {
     signIn,
     signOut,
     refresh,
-    loadAttendance,
+    loadDeviceEvents,
+    loadDeviceEventPayload,
     connectMonitor,
     dispose,
   }

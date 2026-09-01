@@ -26,12 +26,12 @@ const router = createRouter({
           },
         },
         {
-          path: 'attendance',
-          name: 'attendance',
-          component: () => import('../views/AttendanceView.vue'),
+          path: 'events',
+          name: 'events',
+          component: () => import('../views/DeviceEventsView.vue'),
           meta: {
-            label: 'Attendance',
-            description: 'Received employee events',
+            label: 'Device events',
+            description: 'Exact PushSDK event payloads received from terminals',
           },
         },
         {
@@ -54,7 +54,11 @@ const router = createRouter({
         },
       ],
     },
-    { path: '/:pathMatch(.*)*', redirect: { name: 'overview' } },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('../views/NotFoundView.vue'),
+    },
   ],
 })
 

@@ -85,7 +85,7 @@ const monitorConnectionSeverity = computed(
           Waiting for gateway activity
         </p>
         <p class="mt-2 text-sm text-slate-500">
-          Keep this view open while testing terminal registration or attendance
+          Keep this view open while testing terminal registration or device
           events.
         </p>
       </div>

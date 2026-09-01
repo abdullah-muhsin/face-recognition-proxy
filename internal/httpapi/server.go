@@ -55,7 +55,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.withSession(s.logout))
 	mux.HandleFunc("GET /api/v1/admin/overview", s.withSession(s.overview))
-	mux.HandleFunc("GET /api/v1/admin/attendance", s.withSession(s.attendance))
+	mux.HandleFunc("GET /api/v1/admin/events", s.withSession(s.deviceEvents))
+	mux.HandleFunc("GET /api/v1/admin/events/{id}/payload", s.withSession(s.deviceEventPayload))
 	mux.HandleFunc("GET /ws/v1/monitor", s.withSession(s.monitorSocket))
 	mux.HandleFunc("/", s.redirectRoot)
 	mux.HandleFunc("GET /app/", s.webApp)
@@ -156,18 +157,36 @@ func (s *Server) overview(writer http.ResponseWriter, request *http.Request) {
 	}
 	writeJSON(writer, http.StatusOK, overview)
 }
-func (s *Server) attendance(writer http.ResponseWriter, request *http.Request) {
+func (s *Server) deviceEvents(writer http.ResponseWriter, request *http.Request) {
 	limit, offset, err := pagination(request)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	page, err := s.store.Attendance(request.Context(), limit, offset)
+	page, err := s.store.DeviceEvents(request.Context(), limit, offset)
 	if err != nil {
-		s.internalError(writer, "load attendance", err)
+		s.internalError(writer, "load device events", err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, page)
+}
+
+func (s *Server) deviceEventPayload(writer http.ResponseWriter, request *http.Request) {
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		writeError(writer, http.StatusBadRequest, "event id must be a positive integer")
+		return
+	}
+	payload, found, err := s.store.DeviceEventPayload(request.Context(), id)
+	if err != nil {
+		s.internalError(writer, "load device event payload", err)
+		return
+	}
+	if !found {
+		writeError(writer, http.StatusNotFound, "device event not found")
+		return
+	}
+	writeJSON(writer, http.StatusOK, payload)
 }
 
 func (s *Server) withSession(next http.HandlerFunc) http.HandlerFunc {

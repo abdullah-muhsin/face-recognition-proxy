@@ -85,17 +85,19 @@ async function refresh() {
       ><template #content
         ><div class="flex items-start justify-between">
           <div>
-            <p class="text-sm font-medium text-slate-500">Attendance records</p>
+            <p class="text-sm font-medium text-slate-500">Device events</p>
             <p
               class="mt-3 text-3xl font-semibold tracking-tight text-slate-950"
             >
-              {{ gateway.overview.attendanceTotal }}
+              {{ gateway.overview.deviceEventTotal }}
             </p>
-            <p class="mt-2 text-xs text-slate-500">Accepted, durable events</p>
+            <p class="mt-2 text-xs text-slate-500">
+              Raw source payloads retained
+            </p>
           </div>
           <span
             class="grid h-11 w-11 place-items-center rounded-xl bg-cyan-50 text-cyan-700"
-            ><i class="pi pi-clock text-lg"
+            ><i class="pi pi-code text-lg"
           /></span></div></template
     ></Card>
     <Card class="border border-slate-200 shadow-sm"

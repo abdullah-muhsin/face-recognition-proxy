@@ -15,7 +15,7 @@ export function statusLabel(status) {
 
 export function eventSeverity(kind) {
   if (kind.includes('error') || kind.includes('rejected')) return 'danger'
-  if (kind.includes('attendance')) return 'success'
+  if (kind.includes('event_persisted')) return 'success'
   if (kind.includes('login') || kind.includes('connected')) return 'info'
   return 'secondary'
 }
@@ -42,17 +42,10 @@ export function formatShortTime(value) {
   }).format(time)
 }
 
-export function matchesRecord(record, query) {
+export function matchesDeviceEvent(event, query) {
   const term = query.trim().toLocaleLowerCase()
   if (!term) return true
-  return [
-    record.employeeNumber,
-    record.employeeName,
-    record.terminalSerialNumber,
-    record.verificationMethod,
-    record.attendanceStatus,
-    record.sourceFormat,
-  ]
+  return [event.vendorEventId, event.terminalSerialNumber, event.dataFormat]
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase()

@@ -92,8 +92,8 @@ func (s *Store) Migrate(ctx context.Context, directory string) error {
 // SynchronizeConfiguredTerminals upserts every deployed terminal mapping. A
 // process restart cannot prove that an old socket is still alive, so every
 // configured terminal starts as offline until it completes AuthInfo and Login
-// again. Historical terminal rows are intentionally retained because attendance
-// records reference their canonical serial numbers.
+// again. Historical terminal rows are intentionally retained because device
+// events reference their canonical serial numbers.
 func (s *Store) SynchronizeConfiguredTerminals(ctx context.Context, terminals []config.Terminal) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -202,85 +202,70 @@ func (s *Store) TerminalStates(ctx context.Context) ([]TerminalState, error) {
 	return states, rows.Err()
 }
 
-type AttendanceRecord struct {
+type DeviceEvent struct {
 	ID                   int64     `json:"id"`
 	TerminalSerialNumber string    `json:"terminalSerialNumber"`
 	VendorEventID        string    `json:"vendorEventId"`
-	OccurredAt           time.Time `json:"occurredAt"`
-	EmployeeNumber       string    `json:"employeeNumber"`
-	EmployeeName         *string   `json:"employeeName"`
-	VerificationMethod   string    `json:"verificationMethod"`
-	AttendanceStatus     *string   `json:"attendanceStatus"`
-	StatusValue          *int      `json:"statusValue"`
-	SourceFormat         string    `json:"sourceFormat"`
+	DataFormat           string    `json:"dataFormat"`
+	PayloadAvailable     bool      `json:"payloadAvailable"`
 	ReceivedAt           time.Time `json:"receivedAt"`
 }
 
-type NewAttendanceRecord struct {
+type DeviceEventPayload struct {
+	ID            int64   `json:"id"`
+	VendorEventID string  `json:"vendorEventId"`
+	DataFormat    string  `json:"dataFormat"`
+	PayloadBase64 *string `json:"payloadBase64"`
+}
+
+type NewDeviceEvent struct {
 	TerminalSerialNumber string
 	VendorEventID        string
-	OccurredAt           time.Time
-	EmployeeNumber       string
-	EmployeeName         *string
-	VerificationMethod   string
-	AttendanceStatus     *string
-	StatusValue          *int
-	SourceFormat         string
+	DataFormat           string
+	PayloadBase64        string
 }
 
-func (s *Store) InsertAttendance(ctx context.Context, record NewAttendanceRecord) (bool, error) {
-	result, err := s.pool.Exec(ctx, `INSERT INTO attendance_records
-        (terminal_serial_number, vendor_event_id, occurred_at, employee_number, employee_name, verification_method, attendance_status, status_value, source_format)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        ON CONFLICT (terminal_serial_number, vendor_event_id) DO NOTHING`,
-		record.TerminalSerialNumber, record.VendorEventID, record.OccurredAt, record.EmployeeNumber, record.EmployeeName,
-		record.VerificationMethod, record.AttendanceStatus, record.StatusValue, record.SourceFormat)
-	if err != nil {
-		return false, fmt.Errorf("insert attendance: %w", err)
-	}
-	return result.RowsAffected() == 1, nil
-}
-
-// InsertAttendanceBatch is atomic: the device only receives success when every
-// accepted item in its Event request has been durably handled.
-func (s *Store) InsertAttendanceBatch(ctx context.Context, records []NewAttendanceRecord) (int, error) {
+// InsertDeviceEventBatch is atomic: the terminal receives success only when
+// every item in its Event request has been durably retained exactly as sent.
+// Each returned flag aligns with the input and states whether that event was
+// newly inserted rather than a safe vendor-UUID retry.
+func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEvent) ([]bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	inserted := 0
-	for _, record := range records {
-		result, err := tx.Exec(ctx, `INSERT INTO attendance_records
-            (terminal_serial_number, vendor_event_id, occurred_at, employee_number, employee_name, verification_method, attendance_status, status_value, source_format)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-            ON CONFLICT (terminal_serial_number, vendor_event_id) DO NOTHING`,
-			record.TerminalSerialNumber, record.VendorEventID, record.OccurredAt, record.EmployeeNumber, record.EmployeeName,
-			record.VerificationMethod, record.AttendanceStatus, record.StatusValue, record.SourceFormat)
+	inserted := make([]bool, len(events))
+	for index, event := range events {
+		result, err := tx.Exec(ctx, `INSERT INTO device_events
+			(terminal_serial_number, vendor_event_id, data_format, payload_base64)
+			VALUES ($1,$2,$3,$4)
+			ON CONFLICT (terminal_serial_number, vendor_event_id) DO NOTHING`,
+			event.TerminalSerialNumber, event.VendorEventID, event.DataFormat, event.PayloadBase64)
 		if err != nil {
-			return 0, fmt.Errorf("insert attendance: %w", err)
+			return nil, fmt.Errorf("insert device event: %w", err)
 		}
-		inserted += int(result.RowsAffected())
+		inserted[index] = result.RowsAffected() == 1
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
 	return inserted, nil
 }
 
-type AttendancePage struct {
-	Records []AttendanceRecord `json:"records"`
-	Total   int64              `json:"total"`
+type DeviceEventPage struct {
+	Events []DeviceEvent `json:"events"`
+	Total  int64         `json:"total"`
 }
 
 type Overview struct {
-	AttendanceTotal int64           `json:"attendanceTotal"`
-	Terminals       []TerminalState `json:"terminals"`
+	DeviceEventTotal int64           `json:"deviceEventTotal"`
+	Terminals        []TerminalState `json:"terminals"`
 }
 
 func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	var overview Overview
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM attendance_records`).Scan(&overview.AttendanceTotal); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM device_events`).Scan(&overview.DeviceEventTotal); err != nil {
 		return overview, err
 	}
 	states, err := s.TerminalStates(ctx)
@@ -291,28 +276,39 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	return overview, nil
 }
 
-func (s *Store) Attendance(ctx context.Context, limit, offset int) (AttendancePage, error) {
-	var page AttendancePage
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM attendance_records`).Scan(&page.Total); err != nil {
+func (s *Store) DeviceEvents(ctx context.Context, limit, offset int) (DeviceEventPage, error) {
+	var page DeviceEventPage
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM device_events`).Scan(&page.Total); err != nil {
 		return page, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, terminal_serial_number, vendor_event_id, occurred_at, employee_number, employee_name,
-        verification_method, attendance_status, status_value, source_format, received_at
-        FROM attendance_records ORDER BY occurred_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
+	rows, err := s.pool.Query(ctx, `SELECT id, terminal_serial_number, vendor_event_id, data_format, payload_base64 IS NOT NULL, received_at
+		FROM device_events ORDER BY received_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return page, err
 	}
 	defer rows.Close()
-	page.Records = []AttendanceRecord{}
+	page.Events = []DeviceEvent{}
 	for rows.Next() {
-		var record AttendanceRecord
-		if err := rows.Scan(&record.ID, &record.TerminalSerialNumber, &record.VendorEventID, &record.OccurredAt, &record.EmployeeNumber,
-			&record.EmployeeName, &record.VerificationMethod, &record.AttendanceStatus, &record.StatusValue, &record.SourceFormat, &record.ReceivedAt); err != nil {
+		var event DeviceEvent
+		if err := rows.Scan(&event.ID, &event.TerminalSerialNumber, &event.VendorEventID, &event.DataFormat, &event.PayloadAvailable, &event.ReceivedAt); err != nil {
 			return page, err
 		}
-		page.Records = append(page.Records, record)
+		page.Events = append(page.Events, event)
 	}
 	return page, rows.Err()
+}
+
+func (s *Store) DeviceEventPayload(ctx context.Context, id int64) (DeviceEventPayload, bool, error) {
+	var payload DeviceEventPayload
+	err := s.pool.QueryRow(ctx, `SELECT id, vendor_event_id, data_format, payload_base64
+		FROM device_events WHERE id = $1`, id).Scan(&payload.ID, &payload.VendorEventID, &payload.DataFormat, &payload.PayloadBase64)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return payload, false, nil
+	}
+	if err != nil {
+		return payload, false, err
+	}
+	return payload, true, nil
 }
 
 func (s *Store) VerifyAdmin(ctx context.Context, username, password string) (int64, bool, error) {

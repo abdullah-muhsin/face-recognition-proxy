@@ -23,19 +23,22 @@ requests by path and upgrades the browser monitoring WebSocket only at `/ws/`.
 
 ## Data and security model
 
-PostgreSQL stores registered terminals, attendance records, and hashed operator
-sessions. Attendance is deduplicated with the terminal serial plus the vendor
-event UUID, so device retries are safe and do not create duplicate records.
+PostgreSQL stores registered terminals, raw device-event source values, and
+hashed operator sessions. Every valid PushSDK `eventList` item is deduplicated
+with the terminal serial plus its vendor UUID, so device retries are safe and
+do not create duplicate events.
 
 The gateway does not contain an HTTP forwarder, Laravel runtime, queue, SQLite
-fallback, or an audit-event ledger. A successfully acknowledged attendance
-event is already committed to PostgreSQL. If PostgreSQL is unavailable, the
-event is rejected so the terminal can retry; it is never silently dropped.
+fallback, or separate audit-event ledger. A successfully acknowledged device
+event has already been committed to PostgreSQL. If PostgreSQL is unavailable,
+the event is rejected so the terminal can retry; it is never silently dropped.
 
 Live monitor messages and JSON logs contain status and protocol metadata only.
-They deliberately exclude encrypted protocol bodies, terminal credentials,
-biometric images, and raw face-event payloads. Those data are neither persisted
-nor broadcast to browsers.
+They deliberately exclude encrypted protocol bodies and terminal credentials.
+Raw device-event data is retained only in PostgreSQL and is available only to a
+signed-in operator through Device Events; it is never broadcast through the
+monitor or emitted in logs. An event payload can contain sensitive vendor data,
+including binary media, so operator credentials control access to it.
 
 ## Strict PushSDK contract
 
@@ -61,13 +64,9 @@ This gateway intentionally accepts only the documented protocol forms:
   not wrapped in a generic `data` object.
 - Events use an exact JSON envelope, base64 data, unique vendor UUIDs, and one
   of `jsonData`, `xmlData`, `boundaryData`, or empty `noData`.
-- `boundaryData` must be the documented direct `multipart/form-data` form with
-  explicit content types. Serialized HTTP wrappers, headerless parts, and
-  guessed media types are rejected.
-
-An active `AccessControllerEvent` must provide its timestamp, employee number,
-and verification method. Missing attendance-status fields remain `NULL`; the
-gateway does not invent labels or normalize vendor values.
+- The source `eventList.data` base64 string is persisted verbatim for every
+  valid item. Its inner JSON, XML, multipart, or binary body is not parsed,
+  labelled, reconstructed, or filtered by the gateway.
 
 ## Local run
 
@@ -91,7 +90,7 @@ because a host-loopback request reaches the container through that bridge.
 
 The operator console uses Tailwind CSS for layout and PrimeVue 4 for accessible
 controls, data tables, panels, feedback, and responsive navigation. Its source
-is deliberately split into Overview, Attendance, Terminals, and Live Monitor
+is deliberately split into Overview, Device Events, Terminals, and Live Monitor
 workspaces; it does not render every operational concern on a single screen.
 
 Vue Router uses history-mode paths beneath `/app/`; the gateway serves the Vue

@@ -67,7 +67,7 @@ async function signIn() {
             A clearer view of every device interaction.
           </h1>
           <p class="mt-6 max-w-lg text-base leading-7 text-slate-300">
-            Monitor terminal health, review received attendance, and follow live
+            Monitor terminal health, inspect raw device events, and follow live
             gateway activity from one focused workspace.
           </p>
         </div>
@@ -92,7 +92,8 @@ async function signIn() {
             <i class="pi pi-database mb-3 text-cyan-300" />
             <p class="text-sm font-semibold">Durable records</p>
             <p class="mt-1 text-xs leading-5 text-slate-400">
-              Accepted attendance is stored before the device is acknowledged.
+              Every accepted device event is retained before the terminal is
+              acknowledged.
             </p>
           </div>
         </div>

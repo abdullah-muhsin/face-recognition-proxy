@@ -15,7 +15,7 @@ func TestWebAppServesVueEntryForHistoryRoutes(t *testing.T) {
 	writeWebFile(t, webDir, "index.html", "operator console")
 	server := &Server{config: config.Config{WebDir: webDir}}
 
-	for _, route := range []string{"/app/", "/app/overview", "/app/attendance"} {
+	for _, route := range []string{"/app/", "/app/overview", "/app/events"} {
 		response := httptest.NewRecorder()
 		server.webApp(response, httptest.NewRequest(http.MethodGet, route, nil))
 		if response.Code != http.StatusOK {

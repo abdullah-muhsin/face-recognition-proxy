@@ -10,7 +10,7 @@ const mobileNavigationVisible = ref(false)
 
 const navigation = [
   { to: '/overview', label: 'Overview', icon: 'pi pi-home' },
-  { to: '/attendance', label: 'Attendance', icon: 'pi pi-clock' },
+  { to: '/events', label: 'Device events', icon: 'pi pi-code' },
   { to: '/terminals', label: 'Terminals', icon: 'pi pi-desktop' },
   { to: '/monitor', label: 'Live monitor', icon: 'pi pi-wave-pulse' },
 ]
