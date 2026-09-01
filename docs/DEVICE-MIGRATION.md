@@ -39,6 +39,16 @@ online registration before continuing.
    offline after restart until the terminal performs `AuthInfo` and `Login`
    again.
 
+## Gateway restart recovery
+
+PushSDK challenges are intentionally in-memory and cannot be reconstructed
+after a gateway restart. If a terminal continues sending requests from its old
+session instead of starting `AuthInfo`, an operator must disable and then
+enable PushSDK once in that terminal's own configuration. This preserves the
+configured hostname, ports, and credentials while initiating a new documented
+registration sequence. The gateway must not persist, replay, or guess an old
+challenge, and it must not alter terminal configuration automatically.
+
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a
 legacy parser fallback to force the test through.
