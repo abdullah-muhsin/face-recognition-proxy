@@ -9,13 +9,10 @@ class ExampleTest extends TestCase
 {
     use RefreshDatabase;
 
-    /**
-     * A basic test example.
-     */
-    public function test_the_application_redirects_anonymous_users_to_sign_in(): void
+    public function test_the_attendance_dashboard_is_public(): void
     {
-        $response = $this->get('/');
-
-        $response->assertRedirect(route('login'));
+        $this->get('/')
+            ->assertOk()
+            ->assertSee('Push SDK Attendance Demo');
     }
 }

@@ -8,6 +8,8 @@ Hikvision terminal -> ESP32 bridge -> Laravel -> SQLite + private picture storag
 
 This project contains no Push SDK routes, terminal-registration table, gateway token, or vendor Push SDK protocol code.
 
+The attendance dashboard is intentionally public and has no accounts or login flow. Keep this demo on a trusted network, or put access controls in front of it when hosting it elsewhere.
+
 ## API
 
 The bridge calls:
@@ -22,12 +24,6 @@ Set `ATTENDANCE_BRIDGE_TOKEN` to a long random secret in production and configur
 ```bash
 composer run setup
 php artisan test
-```
-
-Create an operator after deployment:
-
-```bash
-docker compose exec app php artisan attendance:operator:create operator@example.com --name="Attendance Administrator"
 ```
 
 ## Docker and deployment

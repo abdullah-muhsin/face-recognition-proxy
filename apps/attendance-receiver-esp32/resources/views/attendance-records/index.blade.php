@@ -15,10 +15,6 @@
             </div>
             <div class="header-actions">
                 <a class="button secondary" href="{{ route('attendance-records.index') }}">Refresh</a>
-                <form method="post" action="{{ route('logout') }}">
-                    @csrf
-                    <button class="button ghost" type="submit">Sign out</button>
-                </form>
                 <details class="wipe-control">
                     <summary>Data operations</summary>
                     <form method="post" action="{{ route('attendance-records.wipe') }}">
@@ -26,10 +22,6 @@
                         <label>
                             Type <code>WIPE</code> to confirm
                             <input name="confirmation" autocomplete="off" required>
-                        </label>
-                        <label>
-                            Your password
-                            <input name="password" type="password" autocomplete="current-password" required>
                         </label>
                         <button class="danger" type="submit">Wipe all records</button>
                     </form>

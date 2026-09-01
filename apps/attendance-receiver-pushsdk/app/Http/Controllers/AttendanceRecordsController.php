@@ -45,7 +45,6 @@ class AttendanceRecordsController extends Controller
     {
         $request->validate([
             'confirmation' => ['required', 'in:WIPE'],
-            'password' => ['required', 'current_password'],
         ]);
 
         $recordCount = AttendanceRecord::query()->count();

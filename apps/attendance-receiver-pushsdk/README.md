@@ -8,6 +8,8 @@ Hikvision terminal -> outbound HTTPS/WSS -> Push SDK gateway -> private Laravel 
 
 The terminal must connect outward to the gateway. Do not expose the terminal's ISAPI management ports to make this demo work.
 
+The attendance dashboard is intentionally public and has no accounts or login flow. Keep this demo on a trusted network, or put access controls in front of it when hosting it elsewhere.
+
 ## Gateway contract
 
 Only the gateway may call these private routes with `Authorization: Bearer $ATTENDANCE_PUSH_GATEWAY_TOKEN`:
@@ -45,7 +47,7 @@ docker compose up --build -d
 
 The Compose project creates the internal `attendance_pushsdk_internal` network. The future gateway joins that network and calls Laravel directly; public Nginx traffic is denied from `/api/internal/push-sdk/`.
 
-Use [the Push SDK Nginx template](/home/magnet/services/face-recognition-proxy/deploy/nginx/attendance-receiver-pushsdk.conf) for the operator UI. The production release command uses its own runtime directory and container:
+Use [the Push SDK Nginx template](/home/magnet/services/face-recognition-proxy/deploy/nginx/attendance-receiver-pushsdk.conf) for the demo dashboard. The production release command uses its own runtime directory and container:
 
 ```bash
 ./scripts/release-production.sh \

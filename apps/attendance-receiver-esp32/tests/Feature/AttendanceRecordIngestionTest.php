@@ -3,9 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AttendanceRecord;
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -68,8 +66,7 @@ class AttendanceRecordIngestionTest extends TestCase
             ->assertJsonPath('picture_upload_url', null)
             ->assertJsonPath('picture_stored', true);
 
-        $this->actingAs($this->operator())
-            ->get(route('attendance-records.picture', $record))
+        $this->get(route('attendance-records.picture', $record))
             ->assertOk()
             ->assertHeader('Content-Type', 'image/jpeg');
     }
@@ -192,10 +189,9 @@ class AttendanceRecordIngestionTest extends TestCase
         $this->assertSame(0, AttendanceRecord::count());
     }
 
-    public function test_operator_can_wipe_attendance_records_and_pictures(): void
+    public function test_demo_can_wipe_attendance_records_and_pictures(): void
     {
         Storage::fake('local');
-        $operator = $this->operator();
 
         $response = $this->postJson('/api/attendance-records', $this->payload())
             ->assertCreated();
@@ -206,9 +202,8 @@ class AttendanceRecordIngestionTest extends TestCase
         $record = AttendanceRecord::firstOrFail();
         Storage::disk('local')->assertExists($record->picture_path);
 
-        $this->actingAs($operator)->post(route('attendance-records.wipe'), [
+        $this->post(route('attendance-records.wipe'), [
             'confirmation' => 'WIPE',
-            'password' => 'correct-horse-battery-staple',
         ])
             ->assertRedirect(route('attendance-records.index'))
             ->assertSessionHas('status', 'Wiped 1 record and its stored pictures.');
@@ -219,11 +214,9 @@ class AttendanceRecordIngestionTest extends TestCase
 
     public function test_wipe_requires_an_explicit_confirmation(): void
     {
-        $this->actingAs($this->operator())
-            ->from(route('attendance-records.index'))
+        $this->from(route('attendance-records.index'))
             ->post(route('attendance-records.wipe'), [
                 'confirmation' => 'wipe',
-                'password' => 'correct-horse-battery-staple',
             ])
             ->assertRedirect(route('attendance-records.index'))
             ->assertSessionHasErrors('confirmation');
@@ -288,12 +281,5 @@ class AttendanceRecordIngestionTest extends TestCase
         return $this->call('PUT', parse_url($url, PHP_URL_PATH) ?: $url, [], [], [], [
             'CONTENT_TYPE' => 'image/jpeg',
         ], $picture);
-    }
-
-    private function operator(): User
-    {
-        return User::factory()->create([
-            'password' => Hash::make('correct-horse-battery-staple'),
-        ]);
     }
 }

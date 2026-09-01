@@ -22,35 +22,6 @@ body {
     margin: 0;
 }
 
-.login-shell {
-    align-items: center;
-    display: flex;
-    justify-content: center;
-    min-height: 100vh;
-    padding: 24px;
-}
-
-.login-panel {
-    background: #ffffff;
-    border: 1px solid #d7dde6;
-    border-radius: 16px;
-    box-shadow: 0 16px 40px rgb(16 24 40 / 10%);
-    max-width: 420px;
-    padding: 28px;
-    width: 100%;
-}
-
-.login-panel form {
-    display: grid;
-    gap: 16px;
-    margin-top: 24px;
-}
-
-.form-error {
-    color: #b42318;
-    margin: 0;
-}
-
 .shell {
     max-width: 1440px;
     margin: 0 auto;
