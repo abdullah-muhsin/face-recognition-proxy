@@ -152,6 +152,7 @@ config_file="$runtime_dir/gateway.json"
 container_name="pushsdk_gateway"
 data_volume="pushsdk_gateway_data"
 network_name="attendance_pushsdk_internal"
+edge_network_name="pushsdk_gateway_edge"
 bind_address="127.0.0.1"
 host_port="8100"
 image_repository="pushsdk-gateway"
@@ -211,6 +212,8 @@ if [ -n "$existing_id" ]; then
     existing_networks="$(as_deploy docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$existing_id")"
     printf '%s\n' "$existing_networks" | grep -Fqx "$network_name" \
         || fail "existing '$container_name' is not attached to '$network_name'"
+    printf '%s\n' "$existing_networks" | grep -Fqx "$edge_network_name" \
+        || fail "existing '$container_name' is not attached to '$edge_network_name'"
 fi
 
 if [ ! -d "$project_dir/.git" ]; then
@@ -269,6 +272,9 @@ as_deploy docker build --tag "$image_tag" "$app_dir"
 if ! as_deploy docker network inspect "$network_name" >/dev/null 2>&1; then
     as_deploy docker network create --internal "$network_name" >/dev/null
 fi
+if ! as_deploy docker network inspect "$edge_network_name" >/dev/null 2>&1; then
+    as_deploy docker network create "$edge_network_name" >/dev/null
+fi
 if ! as_deploy docker volume inspect "$data_volume" >/dev/null 2>&1; then
     as_deploy docker volume create "$data_volume" >/dev/null
 fi
@@ -314,11 +320,12 @@ as_deploy docker run --detach \
     --env-file "$runtime_env" \
     --env PUSHSDK_GATEWAY_CONFIG_PATH=/etc/pushsdk-gateway/gateway.json \
     --publish "$bind_address:$host_port:8080" \
-    --network "$network_name" \
+    --network "$edge_network_name" \
     --volume "$data_volume:/var/lib/pushsdk-gateway" \
     --volume "$config_file:/etc/pushsdk-gateway/gateway.json:ro" \
     "$image_tag" >/dev/null
 new_container_started=true
+as_deploy docker network connect "$network_name" "$container_name"
 
 deadline=$((SECONDS + 120))
 while [ "$SECONDS" -lt "$deadline" ]; do
