@@ -233,6 +233,7 @@ public sealed partial class AttendanceEventParser
     private static IReadOnlyList<BoundaryPart> ParseBoundary(byte[] rawData, string eventId)
     {
         var headerTerminator = "\r\n\r\n"u8.ToArray();
+        var lfHeaderTerminator = "\n\n"u8.ToArray();
         var headerEnd = IndexOf(rawData, headerTerminator, 0);
         if (headerEnd < 0)
         {
@@ -314,7 +315,13 @@ public sealed partial class AttendanceEventParser
             var partHeaderEnd = IndexOf(rawData, headerTerminator, position);
             if (partHeaderEnd < 0)
             {
-                throw new ProtocolException(400, $"Event '{eventId}' boundaryData part is missing its header terminator.");
+                var lfHeaderTerminatorIndex = IndexOf(rawData, lfHeaderTerminator, position);
+                var nextDelimiterIndex = IndexOfBoundaryDelimiter(rawData, delimiter, position);
+                throw new ProtocolException(
+                    400,
+                    $"Event '{eventId}' boundaryData part is missing its header terminator " +
+                    $"(LF separator offset {RelativeOffset(lfHeaderTerminatorIndex, position)}, " +
+                    $"next delimiter offset {RelativeOffset(nextDelimiterIndex, position)}).");
             }
 
             var partHeaders = ParseHeaders(Encoding.ASCII.GetString(rawData, position, partHeaderEnd - position).Split("\r\n"), eventId);
@@ -444,6 +451,8 @@ public sealed partial class AttendanceEventParser
         delimiter.CopyTo(prefixedDelimiter, 2);
         return IndexOf(source, prefixedDelimiter, startIndex);
     }
+
+    private static int RelativeOffset(int index, int startIndex) => index < 0 ? -1 : index - startIndex;
 
     private static int FindInitialBoundary(byte[] source, byte[] delimiter, int startIndex)
     {
