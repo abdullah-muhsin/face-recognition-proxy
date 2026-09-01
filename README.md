@@ -3,8 +3,8 @@
 The old Laravel receiver and .NET gateway have been retired from the active
 source tree. Their complete pre-rebuild source snapshot is retained locally in
 the ignored `backups/` directory. This repository is now a single production
-application built with Go, PostgreSQL, Vue 3/Vite (JavaScript), WebSockets, and
-Prometheus.
+application built with Go, PostgreSQL, Vue 3/Vite (JavaScript), Tailwind CSS,
+PrimeVue, WebSockets, and Prometheus.
 
 ## Service boundary
 
@@ -86,6 +86,24 @@ gateway does not invent labels or normalize vendor values.
 The Compose port is loopback-only. It does not expose PostgreSQL or Prometheus
 to the network. The metrics allow list includes the private Docker bridge range
 because a host-loopback request reaches the container through that bridge.
+
+## Frontend development
+
+The operator console uses Tailwind CSS for layout and PrimeVue 4 for accessible
+controls, data tables, panels, feedback, and responsive navigation. Its source
+is deliberately split into Overview, Attendance, Terminals, and Live Monitor
+workspaces; it does not render every operational concern on a single screen.
+
+For standalone frontend work, run:
+
+```bash
+npm --prefix web ci
+npm --prefix web run dev
+```
+
+The Vite server serves the console at `/app/`. For authenticated behaviour,
+run it through the gateway or the local Compose stack so its same-origin API
+and WebSocket endpoints are available.
 
 ## Production release
 
