@@ -359,6 +359,7 @@ func parseISAPICommandInput(request *http.Request) (parsedISAPICommandInput, err
 		Method:           input.Method,
 		URL:              input.URL,
 		DataFormat:       input.DataFormat,
+		Data:             []byte{},
 		ExpiresInSeconds: *input.ExpiresInSeconds,
 	}
 	switch input.DataFormat {

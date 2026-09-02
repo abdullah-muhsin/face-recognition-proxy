@@ -50,6 +50,23 @@ func TestParseISAPICommandInputPreservesTextBytes(t *testing.T) {
 	}
 }
 
+func TestParseISAPICommandInputRepresentsNoDataAsZeroBytes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{
+        "method":"GET",
+        "url":"/ISAPI/System/deviceInfo",
+        "dataFormat":"noData",
+        "expiresInSeconds":60
+    }`))
+	request.Header.Set("Content-Type", "application/json")
+	parsed, err := parseISAPICommandInput(request)
+	if err != nil {
+		t.Fatalf("parseISAPICommandInput() error = %v", err)
+	}
+	if parsed.Data == nil || len(parsed.Data) != 0 {
+		t.Fatalf("noData bytes = %#v, want an explicit empty byte slice", parsed.Data)
+	}
+}
+
 func TestParseISAPICommandInputRejectsAmbiguity(t *testing.T) {
 	for _, body := range []string{
 		`{"method":"get","url":"/ISAPI/System/deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
