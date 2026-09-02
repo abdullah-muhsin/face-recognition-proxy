@@ -10,6 +10,7 @@ Vue 3/Vite (JavaScript), Tailwind CSS, PrimeVue, WebSockets, and Prometheus.
 | `/iot/{pushSdkSerial}/global/0-global/model/service/operate/PUSH/...` | Hikvision terminal | Strict PushSDK protocol endpoint |
 | `/app/` | Administrators | Vue administration console |
 | `/api/v1/...` | Vue console | Same-origin authenticated administration API |
+| `/api/v1/admin/terminals/{serial}/isapi-commands` | Administrators and approved gateway clients | Queue an exact ISAPI command for one online PushSDK terminal |
 | `/ws/v1/monitor` | Vue administration console | Authenticated replay and live stream of retained operational metadata |
 | `/metrics` | Prometheus only | Private metric endpoint |
 | `/healthz`, `/readyz` | Infrastructure | Liveness and database readiness |
@@ -40,6 +41,11 @@ PostgreSQL and is available only to a signed-in administrator through Event Arch
 it is never broadcast through the monitor or emitted in logs. An event payload
 can contain sensitive vendor data, including binary media, so administrator
 credentials control access to it.
+
+ISAPI command request bytes and command-result source values can be sensitive
+as well. They are retained only in PostgreSQL's command audit and returned only
+by the signed-in administration API; gateway activity and its live monitor
+contain command metadata only, never command payloads or results.
 
 The PushSDK session checkpoint contains only the negotiated payload mode,
 server-issued salt and challenges, iteration count, timestamps, and a hash of
@@ -77,7 +83,18 @@ This gateway intentionally accepts only the documented protocol forms:
 - `Login` and `Logout` use the standard response envelope. `CommandRequest`
   and `CommandResult` use their documented top-level command fields, while an
   `Event` response is the documented top-level per-event result array; they are
-  not wrapped in a generic `data` object.
+  not wrapped in a generic `data` object. `CommandRequest` delivers at most 20
+  durable, UUID-correlated ISAPI commands in vendor format; `CommandResult`
+  accepts only an explicitly declared format and exact Base64 result value for
+  one of those sent commands.
+- The signed-in administration console provides an ISAPI Console and the same
+  capability is available through `POST
+  /api/v1/admin/terminals/{serial}/isapi-commands`. It requires `method`,
+  `url`, `dataFormat`, and `expiresInSeconds`; JSON and XML use `textData`,
+  multipart uses `dataBase64`, and `noData` carries neither. The URL is an
+  exact absolute `/ISAPI/` path. The gateway does not open direct connections
+  to terminals, infer an omitted data format, rewrite paths or payloads, or
+  retain an unbounded command for later delivery.
 - Events use an exact JSON envelope, base64 data, unique vendor UUIDs, and one
   of `jsonData`, `xmlData`, `boundaryData`, or empty `noData`.
 - The source `eventList.data` base64 string is persisted verbatim for every
@@ -97,6 +114,39 @@ This gateway intentionally accepts only the documented protocol forms:
   For a documented multipart `Picture` part explicitly declared as JPEG, it
   also displays those exact image bytes without resizing, transcoding, or
   reconstructing the source.
+
+## ISAPI command API
+
+The ISAPI Console and automation use the same signed-in administration API.
+Commands are delivered only through a configured terminal's authenticated
+PushSDK `CommandRequest` poll; this is not a gateway HTTP proxy to the terminal.
+
+`POST /api/v1/admin/terminals/{serial}/isapi-commands` accepts exactly one JSON
+request of this form:
+
+```json
+{
+  "method": "GET",
+  "url": "/ISAPI/System/deviceInfo",
+  "dataFormat": "noData",
+  "expiresInSeconds": 60
+}
+```
+
+`method` is exactly `GET`, `POST`, `PUT`, or `DELETE`. `url` is an exact,
+visible-ASCII absolute `/ISAPI/` path with an optional one query string. A
+`jsonData` or `xmlData` command instead includes non-empty `textData`; a
+`boundaryData` command includes non-empty canonical-standard `dataBase64` for
+the complete multipart bytes. `noData` carries neither field. Every request
+must explicitly choose an expiry from 1 to 3600 seconds. The terminal must be
+online when the command is queued; otherwise the endpoint returns `409` and
+does not retain the request.
+
+`GET /api/v1/admin/isapi-commands` lists the durable command audit history and
+`GET /api/v1/admin/isapi-commands/{uuid}` returns its exact request bytes and
+the terminal's exact declared response Base64 value. All three endpoints use
+the existing signed-in administrator session, so no terminal credential or
+separate device-facing authorization is exposed to the caller.
 
 ## Local run
 

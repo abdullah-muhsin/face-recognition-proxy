@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -28,9 +29,14 @@ import (
 )
 
 const (
-	sessionCookie       = "pushsdk_admin_session"
-	monitorHistoryLimit = 100
+	sessionCookie        = "pushsdk_admin_session"
+	monitorHistoryLimit  = 100
+	maxISAPICommandBytes = 8 << 20
 )
+
+type contextKey string
+
+const administratorIdentityContextKey contextKey = "administrator-identity"
 
 type Server struct {
 	config      config.Config
@@ -62,6 +68,9 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/admin/overview", s.withSession(s.overview))
 	mux.HandleFunc("GET /api/v1/admin/events", s.withSession(s.deviceEvents))
 	mux.HandleFunc("GET /api/v1/admin/events/{id}/payload", s.withSession(s.deviceEventPayload))
+	mux.HandleFunc("GET /api/v1/admin/isapi-commands", s.withSession(s.isapiCommands))
+	mux.HandleFunc("GET /api/v1/admin/isapi-commands/{uuid}", s.withSession(s.isapiCommandPayload))
+	mux.HandleFunc("POST /api/v1/admin/terminals/{serial}/isapi-commands", s.withSession(s.queueISAPICommand))
 	mux.HandleFunc("GET /api/v1/admin/activity", s.withSession(s.gatewayActivity))
 	mux.HandleFunc("GET /ws/v1/monitor", s.withSession(s.monitorSocket))
 	mux.HandleFunc("/", s.redirectRoot)
@@ -279,6 +288,182 @@ func (s *Server) gatewayActivity(writer http.ResponseWriter, request *http.Reque
 	writeJSON(writer, http.StatusOK, page)
 }
 
+type isapiCommandInput struct {
+	Method           string  `json:"method"`
+	URL              string  `json:"url"`
+	DataFormat       string  `json:"dataFormat"`
+	TextData         *string `json:"textData"`
+	DataBase64       *string `json:"dataBase64"`
+	ExpiresInSeconds *int    `json:"expiresInSeconds"`
+}
+
+func (s *Server) queueISAPICommand(writer http.ResponseWriter, request *http.Request) {
+	identity, found := administratorIdentity(request.Context())
+	if !found {
+		s.internalError(writer, "load administrator identity for ISAPI command", errors.New("identity missing from authenticated request"))
+		return
+	}
+	input, err := parseISAPICommandInput(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	command, stored, err := s.store.QueueISAPICommand(request.Context(), store.NewISAPICommand{
+		TerminalSerialNumber: request.PathValue("serial"),
+		CreatedBy:            identity,
+		Method:               input.Method,
+		URL:                  input.URL,
+		DataFormat:           input.DataFormat,
+		Data:                 input.Data,
+		ExpiresAt:            time.Now().UTC().Add(time.Duration(input.ExpiresInSeconds) * time.Second),
+	})
+	if errors.Is(err, store.ErrISAPICommandTerminalNotFound) {
+		writeError(writer, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrISAPICommandTerminalOffline) {
+		writeError(writer, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		s.internalError(writer, "queue ISAPI command", err)
+		return
+	}
+	s.hub.Publish(stored)
+	writeJSON(writer, http.StatusCreated, command)
+}
+
+type parsedISAPICommandInput struct {
+	Method           string
+	URL              string
+	DataFormat       string
+	Data             []byte
+	ExpiresInSeconds int
+}
+
+func parseISAPICommandInput(request *http.Request) (parsedISAPICommandInput, error) {
+	var input isapiCommandInput
+	if err := decodeISAPICommandJSON(request, &input); err != nil {
+		return parsedISAPICommandInput{}, err
+	}
+	if input.ExpiresInSeconds == nil || *input.ExpiresInSeconds < 1 || *input.ExpiresInSeconds > 3600 {
+		return parsedISAPICommandInput{}, errors.New("expiresInSeconds must be an integer from 1 to 3600")
+	}
+	if input.Method != "GET" && input.Method != "POST" && input.Method != "PUT" && input.Method != "DELETE" {
+		return parsedISAPICommandInput{}, errors.New("method must be GET, POST, PUT, or DELETE")
+	}
+	if err := validateISAPIURL(input.URL); err != nil {
+		return parsedISAPICommandInput{}, err
+	}
+	parsed := parsedISAPICommandInput{
+		Method:           input.Method,
+		URL:              input.URL,
+		DataFormat:       input.DataFormat,
+		ExpiresInSeconds: *input.ExpiresInSeconds,
+	}
+	switch input.DataFormat {
+	case "noData":
+		if input.TextData != nil || input.DataBase64 != nil {
+			return parsedISAPICommandInput{}, errors.New("noData commands must not include textData or dataBase64")
+		}
+	case "jsonData", "xmlData":
+		if input.TextData == nil || input.DataBase64 != nil || *input.TextData == "" {
+			return parsedISAPICommandInput{}, errors.New(input.DataFormat + " commands require non-empty textData and must not include dataBase64")
+		}
+		parsed.Data = []byte(*input.TextData)
+	case "boundaryData":
+		if input.TextData != nil || input.DataBase64 == nil || *input.DataBase64 == "" {
+			return parsedISAPICommandInput{}, errors.New("boundaryData commands require non-empty dataBase64 and must not include textData")
+		}
+		decoded, err := base64.StdEncoding.DecodeString(*input.DataBase64)
+		if err != nil || base64.StdEncoding.EncodeToString(decoded) != *input.DataBase64 {
+			return parsedISAPICommandInput{}, errors.New("boundaryData dataBase64 must be canonical standard base64")
+		}
+		parsed.Data = decoded
+	default:
+		return parsedISAPICommandInput{}, errors.New("dataFormat must be jsonData, xmlData, boundaryData, or noData")
+	}
+	if len(parsed.Data) > maxISAPICommandBytes {
+		return parsedISAPICommandInput{}, errors.New("ISAPI command data must not exceed 8 MiB")
+	}
+	return parsed, nil
+}
+
+func validateISAPIURL(raw string) error {
+	if len(raw) < len("/ISAPI/")+1 || len(raw) > 4096 || !strings.HasPrefix(raw, "/ISAPI/") {
+		return errors.New("url must be an absolute /ISAPI/ path from 8 to 4096 bytes")
+	}
+	if strings.Count(raw, "?") > 1 || strings.Contains(raw, "#") {
+		return errors.New("url must not contain an ambiguous query or fragment")
+	}
+	for index := 0; index < len(raw); index++ {
+		if raw[index] <= 0x20 || raw[index] >= 0x7f {
+			return errors.New("url must contain only visible ASCII bytes")
+		}
+	}
+	path := raw
+	if queryAt := strings.IndexByte(path, '?'); queryAt >= 0 {
+		path = path[:queryAt]
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(path, "/ISAPI/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return errors.New("url path must contain explicit non-relative segments")
+		}
+	}
+	return nil
+}
+
+func (s *Server) isapiCommands(writer http.ResponseWriter, request *http.Request) {
+	limit, offset, err := pagination(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	terminal, err := isapiCommandTerminalFilter(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := s.store.QueryISAPICommands(request.Context(), terminal, limit, offset)
+	if err != nil {
+		s.internalError(writer, "load ISAPI commands", err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, page)
+}
+
+func isapiCommandTerminalFilter(request *http.Request) (string, error) {
+	values := request.URL.Query()
+	for key, value := range values {
+		if key != "limit" && key != "offset" && key != "terminal" {
+			return "", fmt.Errorf("unsupported ISAPI command query parameter %q", key)
+		}
+		if len(value) != 1 {
+			return "", fmt.Errorf("%s must appear at most once", key)
+		}
+	}
+	if terminal, present := values["terminal"]; present {
+		if terminal[0] == "" {
+			return "", errors.New("terminal must not be empty")
+		}
+		return terminal[0], nil
+	}
+	return "", nil
+}
+
+func (s *Server) isapiCommandPayload(writer http.ResponseWriter, request *http.Request) {
+	payload, found, err := s.store.ISAPICommandPayload(request.Context(), request.PathValue("uuid"))
+	if err != nil {
+		s.internalError(writer, "load ISAPI command payload", err)
+		return
+	}
+	if !found {
+		writeError(writer, http.StatusNotFound, "ISAPI command not found")
+		return
+	}
+	writeJSON(writer, http.StatusOK, payload)
+}
+
 func (s *Server) withSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		token, err := sessionToken(request)
@@ -287,7 +472,7 @@ func (s *Server) withSession(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		sum := sha256.Sum256([]byte(token))
-		valid, err := s.store.SessionValid(request.Context(), sum[:])
+		identity, valid, err := s.store.AdminIdentityForSession(request.Context(), sum[:])
 		if err != nil {
 			s.internalError(writer, "validate admin session", err)
 			return
@@ -296,8 +481,13 @@ func (s *Server) withSession(next http.HandlerFunc) http.HandlerFunc {
 			writeError(writer, http.StatusUnauthorized, "authentication required")
 			return
 		}
-		next(writer, request)
+		next(writer, request.WithContext(context.WithValue(request.Context(), administratorIdentityContextKey, identity)))
 	}
+}
+
+func administratorIdentity(ctx context.Context) (store.AdminIdentity, bool) {
+	identity, found := ctx.Value(administratorIdentityContextKey).(store.AdminIdentity)
+	return identity, found
 }
 
 func (s *Server) monitorSocket(writer http.ResponseWriter, request *http.Request) {
@@ -384,6 +574,25 @@ func decodeJSON(request *http.Request, target any) error {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("invalid JSON request")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("request contains a trailing JSON value")
+	}
+	return nil
+}
+
+func decodeISAPICommandJSON(request *http.Request, target any) error {
+	if contentType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type")); err != nil || contentType != "application/json" {
+		return errors.New("Content-Type must be application/json")
+	}
+	maxJSONBytes := int64(base64.StdEncoding.EncodedLen(maxISAPICommandBytes) + 8192)
+	if request.ContentLength > maxJSONBytes {
+		return errors.New("ISAPI command request must not exceed the 8 MiB command-data limit")
+	}
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxJSONBytes+1))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return errors.New("invalid JSON request")
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return errors.New("request contains a trailing JSON value")

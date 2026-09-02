@@ -45,6 +45,16 @@ const router = createRouter({
           },
         },
         {
+          path: 'isapi',
+          name: 'isapi',
+          component: () => import('../views/ISAPIConsoleView.vue'),
+          meta: {
+            label: 'ISAPI console',
+            description:
+              'Queued ISAPI control through authenticated PushSDK terminals',
+          },
+        },
+        {
           path: 'activity',
           name: 'activity',
           component: () => import('../views/GatewayActivityView.vue'),

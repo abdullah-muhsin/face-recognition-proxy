@@ -13,6 +13,12 @@ const snapshotActivityKinds = new Set([
   'pushsdk.logout',
   'pushsdk.session_resumed',
 ])
+const commandActivityKinds = new Set([
+  'admin.isapi_command_queued',
+  'pushsdk.command_sent',
+  'pushsdk.command_completed',
+  'pushsdk.command_expired',
+])
 
 export const useGatewayStore = defineStore('gateway', () => {
   const initialized = ref(false)
@@ -22,6 +28,7 @@ export const useGatewayStore = defineStore('gateway', () => {
   const refreshing = ref(false)
   const eventsLoading = ref(false)
   const activityLoading = ref(false)
+  const isapiCommandsLoading = ref(false)
   const bootstrapError = ref('')
   const overview = ref({ deviceEventTotal: 0, terminals: [] })
   const deviceEvents = ref([])
@@ -32,6 +39,9 @@ export const useGatewayStore = defineStore('gateway', () => {
   const gatewayActivities = ref([])
   const gatewayActivitiesTotal = ref(0)
   const gatewayActivitiesOffset = ref(0)
+  const isapiCommands = ref([])
+  const isapiCommandsTotal = ref(0)
+  const isapiCommandsOffset = ref(0)
   const monitor = ref([])
   const socketState = ref('disconnected')
   const lastUpdatedAt = ref(null)
@@ -116,6 +126,43 @@ export const useGatewayStore = defineStore('gateway', () => {
     }
   }
 
+  async function loadISAPICommands(
+    offset = isapiCommandsOffset.value,
+    terminal = '',
+  ) {
+    isapiCommandsLoading.value = true
+    try {
+      const parameters = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String(offset),
+      })
+      if (terminal !== '') parameters.set('terminal', terminal)
+      const page = await request(`/api/v1/admin/isapi-commands?${parameters}`)
+      isapiCommandsOffset.value = offset
+      isapiCommands.value = page.commands
+      isapiCommandsTotal.value = page.total
+    } finally {
+      isapiCommandsLoading.value = false
+    }
+  }
+
+  function loadISAPICommandPayload(uuid) {
+    return request(`/api/v1/admin/isapi-commands/${uuid}`)
+  }
+
+  async function queueISAPICommand(serial, input) {
+    const command = await request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/isapi-commands`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    )
+    await loadISAPICommands(0)
+    return command
+  }
+
   async function refresh() {
     refreshing.value = true
     try {
@@ -123,6 +170,7 @@ export const useGatewayStore = defineStore('gateway', () => {
         loadOverview(),
         loadDeviceEvents(),
         loadGatewayActivities(),
+        loadISAPICommands(),
       ])
       lastUpdatedAt.value = new Date()
     } finally {
@@ -250,6 +298,8 @@ export const useGatewayStore = defineStore('gateway', () => {
       addMonitorEvent(event)
       scheduleActivityRefresh()
       if (snapshotActivityKinds.has(event.kind)) scheduleSnapshotRefresh()
+      if (commandActivityKinds.has(event.kind))
+        loadISAPICommands().catch(clearSessionOnAuthenticationError)
     }
   }
 
@@ -287,6 +337,9 @@ export const useGatewayStore = defineStore('gateway', () => {
     gatewayActivities.value = []
     gatewayActivitiesTotal.value = 0
     gatewayActivitiesOffset.value = 0
+    isapiCommands.value = []
+    isapiCommandsTotal.value = 0
+    isapiCommandsOffset.value = 0
     monitor.value = []
     lastUpdatedAt.value = null
   }
@@ -304,6 +357,7 @@ export const useGatewayStore = defineStore('gateway', () => {
     refreshing,
     eventsLoading,
     activityLoading,
+    isapiCommandsLoading,
     bootstrapError,
     overview,
     deviceEvents,
@@ -314,6 +368,9 @@ export const useGatewayStore = defineStore('gateway', () => {
     gatewayActivities,
     gatewayActivitiesTotal,
     gatewayActivitiesOffset,
+    isapiCommands,
+    isapiCommandsTotal,
+    isapiCommandsOffset,
     monitor,
     socketState,
     lastUpdatedAt,
@@ -327,6 +384,9 @@ export const useGatewayStore = defineStore('gateway', () => {
     loadDeviceEvents,
     loadDeviceEventPayload,
     loadGatewayActivities,
+    loadISAPICommands,
+    loadISAPICommandPayload,
+    queueISAPICommand,
     connectMonitor,
     dispose,
   }

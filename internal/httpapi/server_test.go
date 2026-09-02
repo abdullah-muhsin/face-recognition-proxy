@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/itplus/pushsdk-gateway/internal/config"
@@ -24,6 +26,69 @@ func TestDeviceEventQueryUsesExplicitCategoryAndSubtypeCodes(t *testing.T) {
 	}
 	if query.Terminal != "DS-K1" {
 		t.Fatalf("terminal = %q, want DS-K1", query.Terminal)
+	}
+}
+
+func TestParseISAPICommandInputPreservesTextBytes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/admin/terminals/DS-K1/isapi-commands", strings.NewReader(`{
+        "method":"PUT",
+        "url":"/ISAPI/AccessControl/remoteCheck?format=json",
+        "dataFormat":"jsonData",
+        "textData":"{\n\t\"RemoteCheck\": true\n}",
+        "expiresInSeconds":60
+    }`))
+	request.Header.Set("Content-Type", "application/json")
+	parsed, err := parseISAPICommandInput(request)
+	if err != nil {
+		t.Fatalf("parseISAPICommandInput() error = %v", err)
+	}
+	if parsed.Method != "PUT" || parsed.URL != "/ISAPI/AccessControl/remoteCheck?format=json" || parsed.DataFormat != "jsonData" || parsed.ExpiresInSeconds != 60 {
+		t.Fatalf("parsed metadata = %#v", parsed)
+	}
+	if !bytes.Equal(parsed.Data, []byte("{\n\t\"RemoteCheck\": true\n}")) {
+		t.Fatalf("payload bytes = %q", parsed.Data)
+	}
+}
+
+func TestParseISAPICommandInputRejectsAmbiguity(t *testing.T) {
+	for _, body := range []string{
+		`{"method":"get","url":"/ISAPI/System/deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
+		`{"method":"GET","url":"https://10.203.216.162/ISAPI/System/deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
+		`{"method":"GET","url":"/ISAPI/System/../deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
+		`{"method":"GET","url":"/ISAPI/System/deviceInfo","dataFormat":"noData","textData":"{}","expiresInSeconds":60}`,
+		`{"method":"PUT","url":"/ISAPI/System/deviceInfo","dataFormat":"boundaryData","dataBase64":"eA==\n","expiresInSeconds":60}`,
+		`{"method":"GET","url":"/ISAPI/System/deviceInfo","dataFormat":"noData"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			if _, err := parseISAPICommandInput(request); err == nil {
+				t.Fatalf("parseISAPICommandInput() accepted %s", body)
+			}
+		})
+	}
+}
+
+func TestISAPICommandFilterRequiresOneKnownParameter(t *testing.T) {
+	for _, rawQuery := range []string{
+		"terminal=DS-K1",
+		"terminal=DS-K1&terminal=DS-K2",
+		"terminal=",
+		"terminal=DS-K1&unknown=value",
+	} {
+		t.Run(rawQuery, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/isapi-commands?"+rawQuery, nil)
+			terminal, err := isapiCommandTerminalFilter(request)
+			if rawQuery == "terminal=DS-K1" {
+				if err != nil || terminal != "DS-K1" {
+					t.Fatalf("filter = %q, %v", terminal, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("isapiCommandTerminalFilter() accepted invalid query")
+			}
+		})
 	}
 }
 

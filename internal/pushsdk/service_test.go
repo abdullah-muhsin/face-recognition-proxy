@@ -79,8 +79,8 @@ func TestActionResponseBodiesUseDocumentedTopLevelSchemas(t *testing.T) {
 	}{
 		{
 			name:     "command request",
-			body:     commandRequestResponse{successResponse: succeeded(), CommandNum: 0},
-			wantKeys: []string{"status", "code", "errorMsg", "commandNum"},
+			body:     commandRequestResponse{successResponse: succeeded(), CommandNum: 0, CommandList: []commandRequestItem{}},
+			wantKeys: []string{"status", "code", "errorMsg", "commandNum", "commandList"},
 			forbid:   "data",
 		},
 		{
@@ -123,11 +123,35 @@ func TestActionResponseBodiesUseDocumentedTopLevelSchemas(t *testing.T) {
 	}
 }
 
-func TestValidateEmptyCommandResultRequiresDocumentedTopLevelFields(t *testing.T) {
-	if err := validateEmptyCommandResult([]byte(`{"commandNum":0,"commandList":[]}`)); err != nil {
+func TestParseCommandResultBatchRequiresDocumentedTopLevelFields(t *testing.T) {
+	if _, err := ParseCommandResultBatch([]byte(`{"commandNum":0,"commandList":[]}`)); err != nil {
 		t.Fatalf("valid no-command result: %v", err)
 	}
-	if err := validateEmptyCommandResult([]byte(`{"data":{"commandNum":0,"commandList":[]}}`)); err == nil {
+	if _, err := ParseCommandResultBatch([]byte(`{"data":{"commandNum":0,"commandList":[]}}`)); err == nil {
 		t.Fatal("unexpected data wrapper must be rejected")
+	}
+}
+
+func TestParseCommandResultBatchPreservesDeclaredFormatAndBase64(t *testing.T) {
+	const uuid = "1a2b3c4d-5e6f-4789-8abc-def012345678"
+	results, err := ParseCommandResultBatch([]byte(`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":"jsonData","data":"eyJvayI6dHJ1ZX0="}]}`))
+	if err != nil {
+		t.Fatalf("ParseCommandResultBatch() error = %v", err)
+	}
+	if len(results) != 1 || results[0].UUID != uuid || results[0].DataFormat != "jsonData" || results[0].DataBase64 != "eyJvayI6dHJ1ZX0=" {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestParseCommandResultBatchRejectsMissingOrAmbiguousDataFormat(t *testing.T) {
+	const uuid = "1a2b3c4d-5e6f-4789-8abc-def012345678"
+	for _, payload := range []string{
+		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","data":""}]}`,
+		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":"noData","data":"eA=="}]}`,
+		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":"jsonData","data":""}]}`,
+	} {
+		if _, err := ParseCommandResultBatch([]byte(payload)); err == nil {
+			t.Fatalf("ParseCommandResultBatch() accepted %s", payload)
+		}
 	}
 }

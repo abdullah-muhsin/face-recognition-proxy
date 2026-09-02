@@ -346,16 +346,6 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	return result, params, nil
 }
 
-type commandRequestResponse struct {
-	successResponse
-	CommandNum int `json:"commandNum"`
-}
-
-type commandResultResponse struct {
-	successResponse
-	IsPendingCommand bool `json:"isPendingCommand"`
-}
-
 type eventResponseItem struct {
 	UUID string `json:"UUID"`
 	successResponse
@@ -409,12 +399,31 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 		if len(body) != 0 {
 			return protocolResponse{}, nil, badRequest("CommandRequest body must be empty")
 		}
-		result = protocolResponse{Body: commandRequestResponse{successResponse: succeeded(), CommandNum: 0}}
-	case "CommandResult":
-		if err := validateEmptyCommandResult(body); err != nil {
+		deliveries, activities, err := s.store.ClaimISAPICommands(ctx, terminal.SerialNumber, 20)
+		if err != nil {
 			return protocolResponse{}, nil, err
 		}
-		result = protocolResponse{Body: commandResultResponse{successResponse: succeeded(), IsPendingCommand: false}}
+		commands := make([]commandRequestItem, 0, len(deliveries))
+		for _, delivery := range deliveries {
+			commands = append(commands, commandRequestItemFor(delivery))
+		}
+		for _, stored := range activities {
+			s.hub.Publish(stored)
+		}
+		result = protocolResponse{Body: commandRequestResponse{successResponse: succeeded(), CommandNum: len(commands), CommandList: commands}}
+	case "CommandResult":
+		results, err := ParseCommandResultBatch(body)
+		if err != nil {
+			return protocolResponse{}, nil, err
+		}
+		activities, pending, err := s.store.CompleteISAPICommands(ctx, terminal.SerialNumber, results)
+		if err != nil {
+			return protocolResponse{}, nil, unprocessable("CommandResult is invalid: %v", err)
+		}
+		for _, stored := range activities {
+			s.hub.Publish(stored)
+		}
+		result = protocolResponse{Body: commandResultResponse{successResponse: succeeded(), IsPendingCommand: pending}}
 	case "Event":
 		result, err = s.events(ctx, terminal, body)
 		if err != nil {
@@ -491,25 +500,6 @@ func (s *Service) events(ctx context.Context, terminal config.Terminal, body []b
 		s.hub.Publish(persisted[index].Activity)
 	}
 	return protocolResponse{Body: results}, nil
-}
-
-type commandResult struct {
-	CommandNum  *int   `json:"commandNum"`
-	CommandList *[]any `json:"commandList"`
-}
-
-func validateEmptyCommandResult(body []byte) error {
-	var payload commandResult
-	if err := decodeExactJSON(body, &payload); err != nil {
-		return badRequest("CommandResult body: %v", err)
-	}
-	if payload.CommandNum == nil || payload.CommandList == nil {
-		return badRequest("CommandResult must contain commandNum and commandList")
-	}
-	if *payload.CommandNum != 0 || len(*payload.CommandList) != 0 {
-		return unprocessable("CommandResult is invalid: this gateway does not issue device commands")
-	}
-	return nil
 }
 
 func encryptionFromRequest(request *http.Request, security int) (EncryptionParameters, error) {

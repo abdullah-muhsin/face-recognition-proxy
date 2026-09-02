@@ -12,6 +12,7 @@ const navigation = [
   { to: '/board', label: 'Gateway board', icon: 'pi pi-table' },
   { to: '/events', label: 'Event archive', icon: 'pi pi-code' },
   { to: '/terminals', label: 'Terminal registry', icon: 'pi pi-server' },
+  { to: '/isapi', label: 'ISAPI console', icon: 'pi pi-send' },
   { to: '/activity', label: 'Gateway activity', icon: 'pi pi-list' },
 ]
 
