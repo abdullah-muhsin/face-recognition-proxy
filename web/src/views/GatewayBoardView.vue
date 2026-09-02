@@ -4,7 +4,6 @@ import {
   eventSeverity,
   formatShortTime,
   formatTime,
-  monitorConnection,
   statusLabel,
   statusSeverity,
 } from '../lib/presentation'
@@ -12,14 +11,12 @@ import {
 const gateway = useGatewayStore()
 const router = useRouter()
 const latestActivity = computed(() => gateway.monitor.slice(0, 8))
-const connection = computed(() => monitorConnection(gateway.socketState))
 </script>
 
 <template>
   <div
     class="mb-4 flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500"
   >
-    <Tag :value="connection.label" :severity="connection.severity" rounded />
     <span v-if="gateway.lastUpdatedAt">
       Data refreshed {{ formatShortTime(gateway.lastUpdatedAt) }}
     </span>

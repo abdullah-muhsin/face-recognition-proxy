@@ -5,7 +5,6 @@ import {
   formatTime,
   isAuthenticationError,
   matchesGatewayActivity,
-  monitorConnection,
 } from '../lib/presentation'
 
 const gateway = useGatewayStore()
@@ -13,7 +12,6 @@ const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const filter = ref('')
-const connection = computed(() => monitorConnection(gateway.socketState))
 const displayedActivities = computed(() =>
   gateway.gatewayActivities.filter((activity) =>
     matchesGatewayActivity(activity, filter.value),
@@ -60,7 +58,6 @@ async function changePage(event) {
 
 <template>
   <div class="mb-4 flex flex-wrap items-center justify-end gap-2">
-    <Tag :value="connection.label" :severity="connection.severity" rounded />
     <Button
       label="Reconnect stream"
       icon="pi pi-sync"
