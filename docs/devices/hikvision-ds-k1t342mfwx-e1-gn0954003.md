@@ -48,7 +48,7 @@ Configure the terminal only through
 | HTTPS port | `443` |
 | Secure WebSocket port | `443` |
 | Platform username | `attendance_gateway` |
-| Platform password | the protected `PUSHSDK_TERMINAL_GN0954003_PASSWORD` value |
+| Platform password | the protected shared `PUSHSDK_TERMINAL_PASSWORD` value |
 
 The terminal mapping must be present in the protected `terminals.json` before
 PushSDK is enabled. At gateway startup, `SeedConfiguredTerminals` records the
@@ -65,7 +65,7 @@ as protocol state; it is not converted to an encrypted mode by the gateway.
   "serialNumber": "DS-K1T342MFWX-E120260629V044840ENGN0954003",
   "pushSdkSerial": "GN0954003",
   "username": "attendance_gateway",
-  "passwordEnvironmentVariable": "PUSHSDK_TERMINAL_GN0954003_PASSWORD",
+  "passwordEnvironmentVariable": "PUSHSDK_TERMINAL_PASSWORD",
   "loginPasswordDigest": "sha256",
   "securityVersion": 4,
   "commandIntervalSeconds": 5,
