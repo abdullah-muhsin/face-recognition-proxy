@@ -68,6 +68,12 @@ func run(logger *slog.Logger) error {
 	if err := push.RestoreSessions(ctx); err != nil {
 		return fmt.Errorf("restore PushSDK sessions: %w", err)
 	}
+	if err := push.ExpireISAPICommandDeadlines(ctx); err != nil {
+		return fmt.Errorf("reconcile ISAPI command deadlines: %w", err)
+	}
+	runtimeContext, stopRuntimeMaintenance := context.WithCancel(context.Background())
+	defer stopRuntimeMaintenance()
+	go push.MaintainISAPICommandDeadlines(runtimeContext)
 	api, err := httpapi.New(cfg, data, hub, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), logger)
 	if err != nil {
 		return err

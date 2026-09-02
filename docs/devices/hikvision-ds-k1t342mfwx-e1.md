@@ -50,3 +50,12 @@ connection state to `offline`; a valid PushSDK session is the only way to mark
 the terminal online. Existing terminal rows not present in the current
 configuration are retained because event and command audit records reference
 their serial numbers.
+
+## Observed command-result behavior
+
+During retained-event reconciliation on 2026-09-02, this terminal returned the
+exact Base64 result for `POST /ISAPI/AccessControl/AcsEvent?format=json` while
+omitting the optional `dataFormat` member. The gateway records that absence as
+received. The reconciliation workflow validates the retained raw bytes against
+the AcsEvent JSON contract; it does not assign an absent format or alter the
+source bytes.

@@ -212,14 +212,12 @@ CREATE TABLE isapi_commands (
               AND response_data_format_declared = TRUE
               AND response_data_base64 IS NOT NULL)
              OR
-             (data_format = 'noData'
-              AND response_data_format IS NULL
+             (response_data_format IS NULL
               AND response_data_format_declared = FALSE
               AND response_data_base64 IS NOT NULL)
          ))
         OR
         (status = 'expired'
-         AND sent_at IS NULL
          AND completed_at IS NOT NULL
          AND response_data_format IS NULL
          AND response_data_format_declared IS NULL

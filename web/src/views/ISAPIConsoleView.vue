@@ -207,7 +207,7 @@ async function changePage(event) {
             </select>
           </label>
           <label class="grid gap-1.5 text-sm font-medium text-slate-700">
-            Delivery expiry
+            Command deadline
             <InputNumber
               v-model="expiresInSeconds"
               input-id="isapi-expiry"
@@ -526,7 +526,7 @@ async function changePage(event) {
           <dt
             class="text-xs font-medium uppercase tracking-wide text-slate-500"
           >
-            Expiry
+            Deadline
           </dt>
           <dd class="mt-1 text-xs text-slate-800">
             {{ formatTime(selectedPayload.expiresAt) }}

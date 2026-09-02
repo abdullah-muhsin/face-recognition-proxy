@@ -36,7 +36,9 @@ type NewISAPICommand struct {
 	URL                  string
 	DataFormat           string
 	Data                 []byte
-	ExpiresAt            time.Time
+	// ExpiresAt is the command deadline. The terminal must both collect the
+	// command and return its result before this instant.
+	ExpiresAt time.Time
 }
 
 type ISAPICommand struct {
@@ -75,6 +77,11 @@ type ISAPICommandDelivery struct {
 	URL        string
 	DataFormat string
 	Data       []byte
+}
+
+type expiredISAPICommand struct {
+	ISAPICommand
+	Delivered bool
 }
 
 // ISAPICommandResult is the exact data value supplied by a terminal in a
@@ -181,7 +188,7 @@ func (s *Store) ClaimISAPICommands(ctx context.Context, terminalSerial string, l
 	}
 	defer tx.Rollback(ctx)
 
-	activities, err := expireQueuedISAPICommands(ctx, tx, terminalSerial)
+	activities, err := expireOverdueISAPICommandsTx(ctx, tx, &terminalSerial)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -252,17 +259,17 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 		return nil, false, fmt.Errorf("begin complete ISAPI commands: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	activities, err := expireQueuedISAPICommands(ctx, tx, terminalSerial)
+	activities, err := expireOverdueISAPICommandsTx(ctx, tx, &terminalSerial)
 	if err != nil {
 		return nil, false, err
 	}
 	for _, result := range results {
-		var status, requestDataFormat string
+		var status string
 		var responseFormat *string
 		var responseFormatDeclared *bool
 		var responseBase64 *string
-		err := tx.QueryRow(ctx, `SELECT status, data_format, response_data_format, response_data_format_declared, response_data_base64
-			FROM isapi_commands WHERE uuid = $1 AND terminal_serial_number = $2 FOR UPDATE`, result.UUID, terminalSerial).Scan(&status, &requestDataFormat, &responseFormat, &responseFormatDeclared, &responseBase64)
+		err := tx.QueryRow(ctx, `SELECT status, response_data_format, response_data_format_declared, response_data_base64
+			FROM isapi_commands WHERE uuid = $1 AND terminal_serial_number = $2 FOR UPDATE`, result.UUID, terminalSerial).Scan(&status, &responseFormat, &responseFormatDeclared, &responseBase64)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, fmt.Errorf("command result UUID %s is not a sent command for this terminal", result.UUID)
 		}
@@ -271,9 +278,6 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 		}
 		switch status {
 		case "sent":
-			if result.DataFormat == nil && requestDataFormat != "noData" {
-				return nil, false, fmt.Errorf("command result UUID %s omits dataFormat outside the documented noData form", result.UUID)
-			}
 			var completedAt time.Time
 			if result.DataFormat == nil {
 				err = tx.QueryRow(ctx, `UPDATE isapi_commands
@@ -308,7 +312,7 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 			activities = append(activities, syncActivities...)
 		case "completed":
 			if result.DataFormat == nil {
-				if requestDataFormat != "noData" || responseFormat != nil || responseFormatDeclared == nil || *responseFormatDeclared || responseBase64 == nil || *responseBase64 != result.DataBase64 {
+				if responseFormat != nil || responseFormatDeclared == nil || *responseFormatDeclared || responseBase64 == nil || *responseBase64 != result.DataBase64 {
 					return nil, false, fmt.Errorf("command result UUID %s conflicts with its completed result", result.UUID)
 				}
 				continue
@@ -335,9 +339,6 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 
 func (s *Store) QueryISAPICommands(ctx context.Context, terminalSerial string, limit, offset int) (ISAPICommandPage, error) {
 	var page ISAPICommandPage
-	if err := s.expireOverdueISAPICommands(ctx); err != nil {
-		return page, err
-	}
 	var countQuery, listQuery string
 	arguments := []any{limit, offset}
 	if terminalSerial == "" {
@@ -377,9 +378,6 @@ func (s *Store) QueryISAPICommands(ctx context.Context, terminalSerial string, l
 
 func (s *Store) ISAPICommandPayload(ctx context.Context, uuid string) (ISAPICommandPayload, bool, error) {
 	var payload ISAPICommandPayload
-	if err := s.expireOverdueISAPICommands(ctx); err != nil {
-		return payload, false, err
-	}
 	var requestData []byte
 	err := s.pool.QueryRow(ctx, `SELECT uuid, terminal_serial_number, created_by_username, method, url, data_format, status,
 		created_at, expires_at, sent_at, completed_at, response_data_format, response_data_format_declared, response_data_base64 IS NOT NULL,
@@ -413,33 +411,46 @@ func (s *Store) AdminIdentityForSession(ctx context.Context, tokenHash []byte) (
 	return identity, true, nil
 }
 
-// expireOverdueISAPICommands makes the command's explicitly selected expiry a
-// durable status transition even if the terminal has not polled again. Queue
-// claiming repeats the same predicate in its transaction, so an overdue
-// command is never delivered.
-func (s *Store) expireOverdueISAPICommands(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `UPDATE isapi_commands
-		SET status = 'expired', completed_at = now()
-		WHERE status = 'queued' AND expires_at <= now()`)
+// ExpireOverdueISAPICommands resolves every command whose explicit deadline
+// has elapsed. A terminal that collected a command but never returned a result
+// is expired just as explicitly as a command that was never collected.
+func (s *Store) ExpireOverdueISAPICommands(ctx context.Context) ([]activity.Event, error) {
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("expire overdue ISAPI commands: %w", err)
+		return nil, fmt.Errorf("begin ISAPI command deadline reconciliation: %w", err)
 	}
-	return nil
+	defer tx.Rollback(ctx)
+	activities, err := expireOverdueISAPICommandsTx(ctx, tx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit ISAPI command deadline reconciliation: %w", err)
+	}
+	return activities, nil
 }
 
-func expireQueuedISAPICommands(ctx context.Context, tx pgx.Tx, terminalSerial string) ([]activity.Event, error) {
-	rows, err := tx.Query(ctx, `UPDATE isapi_commands
+func expireOverdueISAPICommandsTx(ctx context.Context, tx pgx.Tx, terminalSerial *string) ([]activity.Event, error) {
+	query := `UPDATE isapi_commands
 		SET status = 'expired', completed_at = now()
-		WHERE terminal_serial_number = $1 AND status = 'queued' AND expires_at <= now()
-		RETURNING uuid, method, url, data_format`, terminalSerial)
+		WHERE status IN ('queued', 'sent') AND expires_at <= now()`
+	arguments := []any{}
+	if terminalSerial != nil {
+		query = `UPDATE isapi_commands
+			SET status = 'expired', completed_at = now()
+			WHERE terminal_serial_number = $1 AND status IN ('queued', 'sent') AND expires_at <= now()`
+		arguments = append(arguments, *terminalSerial)
+	}
+	query += ` RETURNING uuid, terminal_serial_number, method, url, data_format, sent_at IS NOT NULL`
+	rows, err := tx.Query(ctx, query, arguments...)
 	if err != nil {
-		return nil, fmt.Errorf("expire queued ISAPI commands: %w", err)
+		return nil, fmt.Errorf("expire overdue ISAPI commands: %w", err)
 	}
 	defer rows.Close()
-	commands := []ISAPICommand{}
+	commands := []expiredISAPICommand{}
 	for rows.Next() {
-		var command ISAPICommand
-		if err := rows.Scan(&command.UUID, &command.Method, &command.URL, &command.DataFormat); err != nil {
+		var command expiredISAPICommand
+		if err := rows.Scan(&command.UUID, &command.TerminalSerialNumber, &command.Method, &command.URL, &command.DataFormat, &command.Delivered); err != nil {
 			return nil, fmt.Errorf("scan expired ISAPI command: %w", err)
 		}
 		commands = append(commands, command)
@@ -451,18 +462,30 @@ func expireQueuedISAPICommands(ctx context.Context, tx pgx.Tx, terminalSerial st
 	rows.Close()
 	activities := []activity.Event{}
 	for _, command := range commands {
+		message := "ISAPI command expired before terminal delivery"
+		phase := "before_delivery"
+		if command.Delivered {
+			message = "ISAPI command expired before terminal result"
+			phase = "awaiting_result"
+		}
 		stored, err := insertGatewayActivity(ctx, tx, activity.Event{
 			Kind:     activity.KindPushSDKCommandExpired,
-			Terminal: terminalSerial,
-			Message:  "queued ISAPI command expired before terminal delivery",
-			Fields: commandActivityFields(command, map[string]any{
+			Terminal: command.TerminalSerialNumber,
+			Message:  message,
+			Fields: commandActivityFields(command.ISAPICommand, map[string]any{
 				"status": "expired",
+				"phase":  phase,
 			}),
 		})
 		if err != nil {
 			return nil, err
 		}
 		activities = append(activities, stored)
+		syncActivities, err := failExpiredAccessEventSyncCommand(ctx, tx, command.UUID, command.Delivered)
+		if err != nil {
+			return nil, err
+		}
+		activities = append(activities, syncActivities...)
 	}
 	return activities, nil
 }

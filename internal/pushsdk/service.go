@@ -19,7 +19,10 @@ import (
 	"github.com/itplus/pushsdk-gateway/internal/store"
 )
 
-const maxRequestBytes = 8 << 20
+const (
+	maxRequestBytes              = 8 << 20
+	commandDeadlineSweepInterval = 5 * time.Second
+)
 
 type Service struct {
 	config   config.Config
@@ -41,6 +44,37 @@ func (s *Service) RestoreSessions(ctx context.Context) error {
 	}
 	s.metrics.SessionsActive.Set(float64(restored))
 	return nil
+}
+
+// ExpireISAPICommandDeadlines publishes every durable command deadline
+// transition, including a linked retained-event sync failure when a terminal
+// does not return the command result in time.
+func (s *Service) ExpireISAPICommandDeadlines(ctx context.Context) error {
+	activities, err := s.store.ExpireOverdueISAPICommands(ctx)
+	if err != nil {
+		return err
+	}
+	for _, stored := range activities {
+		s.hub.Publish(stored)
+	}
+	return nil
+}
+
+// MaintainISAPICommandDeadlines keeps command lifecycle state bounded even
+// when neither an administrator nor a terminal sends another request.
+func (s *Service) MaintainISAPICommandDeadlines(ctx context.Context) {
+	ticker := time.NewTicker(commandDeadlineSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.ExpireISAPICommandDeadlines(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				s.logger.Error("reconcile ISAPI command deadlines", "error", err)
+			}
+		}
+	}
 }
 
 func (s *Service) persistSession(ctx context.Context, session *Session) error {

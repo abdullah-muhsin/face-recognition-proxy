@@ -79,6 +79,10 @@ func (s *Store) QueueAccessEventSync(ctx context.Context, terminal string, ident
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, terminal); err != nil {
 		return AccessEventSyncRun{}, nil, fmt.Errorf("lock retained event sync terminal: %w", err)
 	}
+	expiryActivities, err := expireOverdueISAPICommandsTx(ctx, tx, &terminal)
+	if err != nil {
+		return AccessEventSyncRun{}, nil, err
+	}
 	var terminalStatus string
 	err = tx.QueryRow(ctx, `SELECT connection_status FROM terminals WHERE serial_number = $1 FOR KEY SHARE`, terminal).Scan(&terminalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -147,7 +151,7 @@ func (s *Store) QueueAccessEventSync(ctx context.Context, terminal string, ident
 	if err := tx.Commit(ctx); err != nil {
 		return AccessEventSyncRun{}, nil, fmt.Errorf("commit retained event sync: %w", err)
 	}
-	return run, []activity.Event{commandActivity, queuedActivity}, nil
+	return run, append(expiryActivities, commandActivity, queuedActivity), nil
 }
 
 func (s *Store) AccessEventSyncRun(ctx context.Context, uuid string) (AccessEventSyncRun, bool, error) {
@@ -206,8 +210,8 @@ func completeAccessEventSyncCommand(ctx context.Context, tx pgx.Tx, terminal str
 	case "time":
 		return completeAccessEventSyncTime(ctx, tx, command, source)
 	case "page":
-		if result.DataFormat == nil || *result.DataFormat != "jsonData" {
-			return failAccessEventSync(ctx, tx, command, "AcsEvent result did not declare jsonData")
+		if result.DataFormat != nil && *result.DataFormat != "jsonData" {
+			return failAccessEventSync(ctx, tx, command, "AcsEvent result declared a format other than jsonData")
 		}
 		return completeAccessEventSyncPage(ctx, tx, command, result.UUID, source, completedAt)
 	default:
@@ -448,4 +452,20 @@ func failAccessEventSync(ctx context.Context, tx pgx.Tx, command accessEventSync
 		return nil, err
 	}
 	return []activity.Event{stored}, nil
+}
+
+func failExpiredAccessEventSyncCommand(ctx context.Context, tx pgx.Tx, commandUUID string, delivered bool) ([]activity.Event, error) {
+	var runUUID string
+	err := tx.QueryRow(ctx, `SELECT sync_run_uuid FROM access_event_sync_commands WHERE command_uuid = $1`, commandUUID).Scan(&runUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load retained event sync for expired command: %w", err)
+	}
+	reason := "retained-event command expired before terminal delivery"
+	if delivered {
+		reason = "terminal did not return the retained-event command result before the command deadline"
+	}
+	return failAccessEventSync(ctx, tx, accessEventSyncCommand{RunUUID: runUUID}, reason)
 }

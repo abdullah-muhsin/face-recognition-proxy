@@ -112,11 +112,12 @@ This gateway intentionally accepts only the documented protocol forms:
   `Event` response is the documented top-level per-event result array; they are
   not wrapped in a generic `data` object. `CommandRequest` delivers at most 20
   durable, UUID-correlated ISAPI commands in vendor format. `CommandResult`
-  accepts an exact Base64 result value for one of those sent commands and an
-  explicitly declared format, except for the vendor-documented `noData` form:
-  the terminal may omit `dataFormat` when the matching sent command used
-  `noData`. The gateway records that omission and its exact Base64 response
-  value without inferring, substituting, or normalizing a format.
+  accepts the exact Base64 result value for one of those sent commands. This
+  terminal family may omit result `dataFormat`; the gateway records that
+  explicit absence and the exact Base64 value without inferring, substituting,
+  or normalizing a format. A workflow that has a documented response contract,
+  such as retained-event reconciliation, validates the raw response bytes
+  directly against that contract.
 - The signed-in administration console provides an ISAPI Console and the same
   capability is available through `POST
   /api/v1/admin/terminals/{serial}/isapi-commands`. It requires `method`,
@@ -124,7 +125,9 @@ This gateway intentionally accepts only the documented protocol forms:
   multipart uses `dataBase64`, and `noData` carries neither. The URL is an
   exact absolute `/ISAPI/` path. The gateway does not open direct connections
   to terminals, infer an omitted data format, rewrite paths or payloads, or
-  retain an unbounded command for later delivery.
+  retain an unbounded command. The selected expiry is a command deadline: the
+  terminal must collect the command and return its result before it; otherwise
+  the command expires durably.
 - Terminal Registry can queue one retained-event reconciliation for an online
   terminal. The workflow first sends `GET /ISAPI/System/time` and accepts only
   the documented `Time.localTime` XML response. It then uses that terminal time
@@ -179,9 +182,10 @@ visible-ASCII absolute `/ISAPI/` path with an optional one query string. A
 `jsonData` or `xmlData` command instead includes non-empty `textData`; a
 `boundaryData` command includes non-empty canonical-standard `dataBase64` for
 the complete multipart bytes. `noData` carries neither field. Every request
-must explicitly choose an expiry from 1 to 3600 seconds. The terminal must be
-online when the command is queued; otherwise the endpoint returns `409` and
-does not retain the request.
+must explicitly choose a command deadline from 1 to 3600 seconds. The terminal
+must collect the command and return its result before that deadline. The
+terminal must be online when the command is queued; otherwise the endpoint
+returns `409` and does not retain the request.
 
 The gateway deliberately has no ISAPI endpoint catalog and does not impose a
 method-to-payload pairing: every combination of those vendor-supported methods

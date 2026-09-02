@@ -47,7 +47,7 @@ async function refresh() {
 }
 
 function syncRunFor(terminal) {
-  return syncRuns.value[terminal.serialNumber]
+  return syncRuns.value[terminal.serialNumber] ?? terminal.latestAccessEventSync ?? null
 }
 
 function syncIsActive(terminal) {
@@ -77,6 +77,7 @@ function trackSync(run) {
   syncTimers.set(
     run.terminalSerialNumber,
     window.setTimeout(async () => {
+      syncTimers.delete(run.terminalSerialNumber)
       try {
         trackSync(await gateway.loadAccessEventSync(run.uuid))
         await gateway.loadDeviceEvents()

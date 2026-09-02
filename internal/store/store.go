@@ -272,11 +272,12 @@ func (s *Store) ReconcileConfiguredAdministrator(ctx context.Context, username, 
 }
 
 type TerminalState struct {
-	SerialNumber  string     `json:"serialNumber"`
-	PushSDKSerial string     `json:"pushSdkSerial"`
-	Status        string     `json:"status"`
-	LastSeenAt    *time.Time `json:"lastSeenAt"`
-	LastError     *string    `json:"lastError"`
+	SerialNumber          string              `json:"serialNumber"`
+	PushSDKSerial         string              `json:"pushSdkSerial"`
+	Status                string              `json:"status"`
+	LastSeenAt            *time.Time          `json:"lastSeenAt"`
+	LastError             *string             `json:"lastError"`
+	LatestAccessEventSync *AccessEventSyncRun `json:"latestAccessEventSync,omitempty"`
 }
 
 // TransitionTerminalState updates a terminal's current state and records the
@@ -313,7 +314,23 @@ func (s *Store) TransitionTerminalState(ctx context.Context, serial, status stri
 }
 
 func (s *Store) TerminalStates(ctx context.Context) ([]TerminalState, error) {
-	rows, err := s.pool.Query(ctx, `SELECT serial_number, pushsdk_serial, connection_status, last_seen_at, last_error FROM terminals ORDER BY serial_number`)
+	rows, err := s.pool.Query(ctx, `SELECT terminal.serial_number, terminal.pushsdk_serial, terminal.connection_status,
+		terminal.last_seen_at, terminal.last_error,
+		sync.uuid, sync.created_by_username, sync.status, sync.search_started_at,
+		sync.search_ended_at, sync.total_matches, sync.pages_completed,
+		sync.records_imported, sync.records_duplicate, sync.failure, sync.created_at,
+		sync.completed_at
+		FROM terminals terminal
+		LEFT JOIN LATERAL (
+			SELECT uuid, created_by_username, status, search_started_at, search_ended_at,
+				total_matches, pages_completed, records_imported, records_duplicate, failure,
+				created_at, completed_at
+			FROM access_event_sync_runs
+			WHERE terminal_serial_number = terminal.serial_number
+			ORDER BY created_at DESC, uuid DESC
+			LIMIT 1
+		) sync ON TRUE
+		ORDER BY terminal.serial_number`)
 	if err != nil {
 		return nil, err
 	}
@@ -321,8 +338,38 @@ func (s *Store) TerminalStates(ctx context.Context) ([]TerminalState, error) {
 	states := []TerminalState{}
 	for rows.Next() {
 		var state TerminalState
-		if err := rows.Scan(&state.SerialNumber, &state.PushSDKSerial, &state.Status, &state.LastSeenAt, &state.LastError); err != nil {
+		var latestUUID, latestCreatedBy, latestStatus *string
+		var latestSearchStarted, latestSearchEnded *time.Time
+		var latestTotal, latestPages, latestImported, latestDuplicate *int
+		var latestFailure *string
+		var latestCreatedAt, latestCompletedAt *time.Time
+		if err := rows.Scan(
+			&state.SerialNumber, &state.PushSDKSerial, &state.Status, &state.LastSeenAt, &state.LastError,
+			&latestUUID, &latestCreatedBy, &latestStatus, &latestSearchStarted, &latestSearchEnded,
+			&latestTotal, &latestPages, &latestImported, &latestDuplicate, &latestFailure,
+			&latestCreatedAt, &latestCompletedAt,
+		); err != nil {
 			return nil, err
+		}
+		if latestUUID != nil {
+			if latestCreatedBy == nil || latestStatus == nil || latestPages == nil || latestImported == nil || latestDuplicate == nil || latestCreatedAt == nil {
+				return nil, errors.New("latest retained event sync is incomplete")
+			}
+			state.LatestAccessEventSync = &AccessEventSyncRun{
+				UUID:                 *latestUUID,
+				TerminalSerialNumber: state.SerialNumber,
+				CreatedByUsername:    *latestCreatedBy,
+				Status:               *latestStatus,
+				SearchStartedAt:      latestSearchStarted,
+				SearchEndedAt:        latestSearchEnded,
+				TotalMatches:         latestTotal,
+				PagesCompleted:       *latestPages,
+				RecordsImported:      *latestImported,
+				RecordsDuplicate:     *latestDuplicate,
+				Failure:              latestFailure,
+				CreatedAt:            *latestCreatedAt,
+				CompletedAt:          latestCompletedAt,
+			}
 		}
 		states = append(states, state)
 	}

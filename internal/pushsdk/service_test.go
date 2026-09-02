@@ -187,7 +187,7 @@ func TestParseCommandResultBatchPreservesEveryDeclaredResponseFormat(t *testing.
 	}
 }
 
-func TestParseCommandResultBatchAcceptsDocumentedNoDataFormatOmission(t *testing.T) {
+func TestParseCommandResultBatchPreservesUndeclaredResultFormat(t *testing.T) {
 	const uuid = "1a2b3c4d-5e6f-4789-8abc-def012345678"
 	results, err := ParseCommandResultBatch([]byte(`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","data":"eyJvayI6dHJ1ZX0="}]}`))
 	if err != nil {
