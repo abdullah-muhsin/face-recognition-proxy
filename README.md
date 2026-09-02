@@ -84,9 +84,12 @@ This gateway intentionally accepts only the documented protocol forms:
   and `CommandResult` use their documented top-level command fields, while an
   `Event` response is the documented top-level per-event result array; they are
   not wrapped in a generic `data` object. `CommandRequest` delivers at most 20
-  durable, UUID-correlated ISAPI commands in vendor format; `CommandResult`
-  accepts only an explicitly declared format and exact Base64 result value for
-  one of those sent commands.
+  durable, UUID-correlated ISAPI commands in vendor format. `CommandResult`
+  accepts an exact Base64 result value for one of those sent commands and an
+  explicitly declared format, except for the vendor-documented `noData` form:
+  the terminal may omit `dataFormat` only when `data` is exactly empty and the
+  matching sent command used `noData`. The gateway records that omission as an
+  omission; it does not infer, substitute, or normalize a format.
 - The signed-in administration console provides an ISAPI Console and the same
   capability is available through `POST
   /api/v1/admin/terminals/{serial}/isapi-commands`. It requires `method`,

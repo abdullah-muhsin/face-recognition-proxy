@@ -1,7 +1,9 @@
 package pushsdk
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"regexp"
 
 	"github.com/itplus/pushsdk-gateway/internal/store"
@@ -33,14 +35,15 @@ type commandResultEnvelope struct {
 }
 
 type commandResultItem struct {
-	UUID       string  `json:"UUID"`
-	DataFormat string  `json:"dataFormat"`
-	Data       *string `json:"data"`
+	UUID       string          `json:"UUID"`
+	DataFormat json.RawMessage `json:"dataFormat"`
+	Data       *string         `json:"data"`
 }
 
 // ParseCommandResultBatch accepts exactly the documented PushSDK result
-// envelope. Every result declares its data format explicitly; the gateway
-// does not infer formats from data bytes or missing fields.
+// envelope. The vendor documents one exception: a noData result can omit
+// dataFormat. That omission is retained as such and is never inferred or
+// rewritten as a declared format.
 func ParseCommandResultBatch(body []byte) ([]store.ISAPICommandResult, error) {
 	var envelope commandResultEnvelope
 	if err := decodeExactJSON(body, &envelope); err != nil {
@@ -65,24 +68,42 @@ func ParseCommandResultBatch(body []byte) ([]store.ISAPICommandResult, error) {
 			return nil, badRequest("command result contains a duplicate UUID")
 		}
 		seen[item.UUID] = struct{}{}
-		if !supportedDataFormat(item.DataFormat) {
-			return nil, badRequest("command result %s has an unsupported dataFormat", item.UUID)
-		}
 		if item.Data == nil {
 			return nil, badRequest("command result %s has no data", item.UUID)
 		}
 		if _, err := base64.StdEncoding.DecodeString(*item.Data); err != nil {
 			return nil, badRequest("command result %s data is not base64: %v", item.UUID, err)
 		}
-		if item.DataFormat == "noData" && *item.Data != "" {
-			return nil, badRequest("command result %s noData payload must be empty", item.UUID)
-		}
-		if item.DataFormat != "noData" && *item.Data == "" {
-			return nil, badRequest("command result %s payload must not be empty", item.UUID)
+		var dataFormat *string
+		if item.DataFormat == nil {
+			// The vendor's CommandResult model documents that a device may omit
+			// dataFormat for noData. An empty source value is the only accepted
+			// omission; Store correlates it with the sent noData command.
+			if *item.Data != "" {
+				return nil, badRequest("command result %s omits dataFormat with non-empty data", item.UUID)
+			}
+		} else {
+			if bytes.Equal(bytes.TrimSpace(item.DataFormat), []byte("null")) {
+				return nil, badRequest("command result %s dataFormat must be a string when present", item.UUID)
+			}
+			var declaredFormat string
+			if err := json.Unmarshal(item.DataFormat, &declaredFormat); err != nil {
+				return nil, badRequest("command result %s dataFormat must be a string when present", item.UUID)
+			}
+			dataFormat = &declaredFormat
+			if !supportedDataFormat(*dataFormat) {
+				return nil, badRequest("command result %s has an unsupported dataFormat", item.UUID)
+			}
+			if *dataFormat == "noData" && *item.Data != "" {
+				return nil, badRequest("command result %s noData payload must be empty", item.UUID)
+			}
+			if *dataFormat != "noData" && *item.Data == "" {
+				return nil, badRequest("command result %s payload must not be empty", item.UUID)
+			}
 		}
 		results = append(results, store.ISAPICommandResult{
 			UUID:       item.UUID,
-			DataFormat: item.DataFormat,
+			DataFormat: dataFormat,
 			DataBase64: *item.Data,
 		})
 	}

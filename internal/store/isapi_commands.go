@@ -40,19 +40,20 @@ type NewISAPICommand struct {
 }
 
 type ISAPICommand struct {
-	UUID                  string     `json:"uuid"`
-	TerminalSerialNumber  string     `json:"terminalSerialNumber"`
-	CreatedByUsername     string     `json:"createdByUsername"`
-	Method                string     `json:"method"`
-	URL                   string     `json:"url"`
-	DataFormat            string     `json:"dataFormat"`
-	Status                string     `json:"status"`
-	CreatedAt             time.Time  `json:"createdAt"`
-	ExpiresAt             time.Time  `json:"expiresAt"`
-	SentAt                *time.Time `json:"sentAt"`
-	CompletedAt           *time.Time `json:"completedAt"`
-	ResponseDataFormat    *string    `json:"responseDataFormat"`
-	ResponseDataAvailable bool       `json:"responseDataAvailable"`
+	UUID                       string     `json:"uuid"`
+	TerminalSerialNumber       string     `json:"terminalSerialNumber"`
+	CreatedByUsername          string     `json:"createdByUsername"`
+	Method                     string     `json:"method"`
+	URL                        string     `json:"url"`
+	DataFormat                 string     `json:"dataFormat"`
+	Status                     string     `json:"status"`
+	CreatedAt                  time.Time  `json:"createdAt"`
+	ExpiresAt                  time.Time  `json:"expiresAt"`
+	SentAt                     *time.Time `json:"sentAt"`
+	CompletedAt                *time.Time `json:"completedAt"`
+	ResponseDataFormat         *string    `json:"responseDataFormat"`
+	ResponseDataFormatDeclared *bool      `json:"responseDataFormatDeclared"`
+	ResponseDataAvailable      bool       `json:"responseDataAvailable"`
 }
 
 type ISAPICommandPayload struct {
@@ -81,7 +82,7 @@ type ISAPICommandDelivery struct {
 // than decoded and re-encoded.
 type ISAPICommandResult struct {
 	UUID       string
-	DataFormat string
+	DataFormat *string
 	DataBase64 string
 }
 
@@ -240,11 +241,12 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 		return nil, false, err
 	}
 	for _, result := range results {
-		var status string
+		var status, requestDataFormat string
 		var responseFormat *string
+		var responseFormatDeclared *bool
 		var responseBase64 *string
-		err := tx.QueryRow(ctx, `SELECT status, response_data_format, response_data_base64
-			FROM isapi_commands WHERE uuid = $1 AND terminal_serial_number = $2 FOR UPDATE`, result.UUID, terminalSerial).Scan(&status, &responseFormat, &responseBase64)
+		err := tx.QueryRow(ctx, `SELECT status, data_format, response_data_format, response_data_format_declared, response_data_base64
+			FROM isapi_commands WHERE uuid = $1 AND terminal_serial_number = $2 FOR UPDATE`, result.UUID, terminalSerial).Scan(&status, &requestDataFormat, &responseFormat, &responseFormatDeclared, &responseBase64)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, false, fmt.Errorf("command result UUID %s is not a sent command for this terminal", result.UUID)
 		}
@@ -253,11 +255,23 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 		}
 		switch status {
 		case "sent":
+			if result.DataFormat == nil && (requestDataFormat != "noData" || result.DataBase64 != "") {
+				return nil, false, fmt.Errorf("command result UUID %s omits dataFormat outside the documented noData form", result.UUID)
+			}
 			var completedAt time.Time
-			err = tx.QueryRow(ctx, `UPDATE isapi_commands
-				SET status = 'completed', completed_at = now(), response_data_format = $2, response_data_base64 = $3
-				WHERE uuid = $1
-				RETURNING completed_at`, result.UUID, result.DataFormat, result.DataBase64).Scan(&completedAt)
+			if result.DataFormat == nil {
+				err = tx.QueryRow(ctx, `UPDATE isapi_commands
+					SET status = 'completed', completed_at = now(), response_data_format = NULL,
+						response_data_format_declared = FALSE, response_data_base64 = $2
+					WHERE uuid = $1
+					RETURNING completed_at`, result.UUID, result.DataBase64).Scan(&completedAt)
+			} else {
+				err = tx.QueryRow(ctx, `UPDATE isapi_commands
+					SET status = 'completed', completed_at = now(), response_data_format = $2,
+						response_data_format_declared = TRUE, response_data_base64 = $3
+					WHERE uuid = $1
+					RETURNING completed_at`, result.UUID, *result.DataFormat, result.DataBase64).Scan(&completedAt)
+			}
 			if err != nil {
 				return nil, false, fmt.Errorf("complete ISAPI command %s: %w", result.UUID, err)
 			}
@@ -265,17 +279,20 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 				Kind:     activity.KindPushSDKCommandCompleted,
 				Terminal: terminalSerial,
 				Message:  "terminal returned an ISAPI command result",
-				Fields: map[string]any{
-					"commandId":  result.UUID,
-					"dataFormat": result.DataFormat,
-				},
+				Fields:   commandResultActivityFields(result),
 			})
 			if err != nil {
 				return nil, false, err
 			}
 			activities = append(activities, stored)
 		case "completed":
-			if responseFormat == nil || *responseFormat != result.DataFormat || responseBase64 == nil || *responseBase64 != result.DataBase64 {
+			if result.DataFormat == nil {
+				if requestDataFormat != "noData" || result.DataBase64 != "" || responseFormat != nil || responseFormatDeclared == nil || *responseFormatDeclared || responseBase64 == nil || *responseBase64 != "" {
+					return nil, false, fmt.Errorf("command result UUID %s conflicts with its completed result", result.UUID)
+				}
+				continue
+			}
+			if responseFormat == nil || responseFormatDeclared == nil || !*responseFormatDeclared || *responseFormat != *result.DataFormat || responseBase64 == nil || *responseBase64 != result.DataBase64 {
 				return nil, false, fmt.Errorf("command result UUID %s conflicts with its completed result", result.UUID)
 			}
 		default:
@@ -305,12 +322,12 @@ func (s *Store) QueryISAPICommands(ctx context.Context, terminalSerial string, l
 	if terminalSerial == "" {
 		countQuery = `SELECT count(*) FROM isapi_commands`
 		listQuery = `SELECT uuid, terminal_serial_number, created_by_username, method, url, data_format, status,
-			created_at, expires_at, sent_at, completed_at, response_data_format, response_data_base64 IS NOT NULL
+			created_at, expires_at, sent_at, completed_at, response_data_format, response_data_format_declared, response_data_base64 IS NOT NULL
 			FROM isapi_commands ORDER BY created_at DESC, uuid DESC LIMIT $1 OFFSET $2`
 	} else {
 		countQuery = `SELECT count(*) FROM isapi_commands WHERE terminal_serial_number = $1`
 		listQuery = `SELECT uuid, terminal_serial_number, created_by_username, method, url, data_format, status,
-			created_at, expires_at, sent_at, completed_at, response_data_format, response_data_base64 IS NOT NULL
+			created_at, expires_at, sent_at, completed_at, response_data_format, response_data_format_declared, response_data_base64 IS NOT NULL
 			FROM isapi_commands WHERE terminal_serial_number = $1 ORDER BY created_at DESC, uuid DESC LIMIT $2 OFFSET $3`
 		arguments = []any{terminalSerial, limit, offset}
 	}
@@ -344,12 +361,12 @@ func (s *Store) ISAPICommandPayload(ctx context.Context, uuid string) (ISAPIComm
 	}
 	var requestData []byte
 	err := s.pool.QueryRow(ctx, `SELECT uuid, terminal_serial_number, created_by_username, method, url, data_format, status,
-		created_at, expires_at, sent_at, completed_at, response_data_format, response_data_base64 IS NOT NULL,
+		created_at, expires_at, sent_at, completed_at, response_data_format, response_data_format_declared, response_data_base64 IS NOT NULL,
 		request_data, response_data_base64
 		FROM isapi_commands WHERE uuid = $1`, uuid).Scan(
 		&payload.UUID, &payload.TerminalSerialNumber, &payload.CreatedByUsername, &payload.Method, &payload.URL,
 		&payload.DataFormat, &payload.Status, &payload.CreatedAt, &payload.ExpiresAt, &payload.SentAt,
-		&payload.CompletedAt, &payload.ResponseDataFormat, &payload.ResponseDataAvailable, &requestData, &payload.ResponseDataBase64)
+		&payload.CompletedAt, &payload.ResponseDataFormat, &payload.ResponseDataFormatDeclared, &payload.ResponseDataAvailable, &requestData, &payload.ResponseDataBase64)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return payload, false, nil
 	}
@@ -432,7 +449,18 @@ func expireQueuedISAPICommands(ctx context.Context, tx pgx.Tx, terminalSerial st
 func scanISAPICommand(row interface{ Scan(...any) error }, command *ISAPICommand) error {
 	return row.Scan(&command.UUID, &command.TerminalSerialNumber, &command.CreatedByUsername, &command.Method, &command.URL,
 		&command.DataFormat, &command.Status, &command.CreatedAt, &command.ExpiresAt, &command.SentAt,
-		&command.CompletedAt, &command.ResponseDataFormat, &command.ResponseDataAvailable)
+		&command.CompletedAt, &command.ResponseDataFormat, &command.ResponseDataFormatDeclared, &command.ResponseDataAvailable)
+}
+
+func commandResultActivityFields(result ISAPICommandResult) map[string]any {
+	fields := map[string]any{
+		"commandId":          result.UUID,
+		"dataFormatDeclared": result.DataFormat != nil,
+	}
+	if result.DataFormat != nil {
+		fields["dataFormat"] = *result.DataFormat
+	}
+	return fields
 }
 
 func commandActivityFields(command ISAPICommand, additional map[string]any) map[string]any {

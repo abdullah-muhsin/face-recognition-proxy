@@ -357,8 +357,10 @@ async function changePage(event) {
         >
           <dt class="font-medium text-slate-700">Result</dt>
           <dd class="text-slate-600">
-            A declared `CommandResult` format and Base64 value are retained
-            under the same command UUID.
+            The exact `CommandResult` format and Base64 value are retained under
+            the same command UUID. The vendor-documented omitted format is
+            accepted only for an empty `noData` result and remains marked as
+            omitted.
           </dd>
         </div>
         <div
@@ -367,7 +369,7 @@ async function changePage(event) {
           <dt class="font-medium text-slate-700">No fallback</dt>
           <dd class="text-slate-600">
             The console never opens a direct HTTP connection to the terminal and
-            never infers missing result formats.
+            never infers, substitutes, or normalizes a result format.
           </dd>
         </div>
       </dl>
@@ -551,8 +553,16 @@ async function changePage(event) {
           </p>
           <p class="mb-2 text-xs text-slate-500">
             <template v-if="selectedPayload.responseDataAvailable">
-              {{ selectedPayload.responseDataFormat }} · exact Base64 source
-              retained
+              <template
+                v-if="selectedPayload.responseDataFormatDeclared === false"
+              >
+                Vendor-omitted format for an empty `noData` result · exact empty
+                Base64 source retained
+              </template>
+              <template v-else>
+                {{ selectedPayload.responseDataFormat }} · exact Base64 source
+                retained
+              </template>
             </template>
             <template v-else>No result has been received.</template>
           </p>
