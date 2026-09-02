@@ -42,36 +42,20 @@ async function refresh() {
 
 <template>
   <div
-    class="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"
+    class="mb-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:justify-end"
   >
-    <div>
-      <p
-        class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
-      >
-        Configured endpoint state
-      </p>
-      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
-        Terminal registry
-      </h1>
-      <p class="mt-1 text-sm text-slate-600">
-        Canonical device identity, current connection state, and the latest
-        gateway observation for every configured PushSDK terminal.
-      </p>
-    </div>
-    <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-      <span class="relative"
-        ><i
-          class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400" /><InputText
-          v-model="filter"
-          class="w-full !pl-8 sm:w-80"
-          placeholder="Filter serial, state, or error" /></span
-      ><Button
-        label="Reload registry"
-        icon="pi pi-refresh"
-        :loading="gateway.refreshing"
-        @click="refresh"
-      />
-    </div>
+    <span class="relative"
+      ><i
+        class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400" /><InputText
+        v-model="filter"
+        class="w-full !pl-8 sm:w-80"
+        placeholder="Filter serial, state, or error" /></span
+    ><Button
+      label="Reload registry"
+      icon="pi pi-refresh"
+      :loading="gateway.refreshing"
+      @click="refresh"
+    />
   </div>
 
   <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">

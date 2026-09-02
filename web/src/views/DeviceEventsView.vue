@@ -153,36 +153,20 @@ async function copyReadablePayload() {
 
 <template>
   <div
-    class="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"
+    class="mb-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:justify-end"
   >
-    <div>
-      <p
-        class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
-      >
-        Durable source collection
-      </p>
-      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
-        Event archive
-      </h1>
-      <p class="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
-        Every structurally valid PushSDK event item retained by the gateway.
-        Payloads are available without event classification or transformation.
-      </p>
-    </div>
-    <div class="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-      <span class="relative"
-        ><i
-          class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" /><InputText
-          v-model="filter"
-          class="w-full !pl-9 sm:w-72"
-          placeholder="Filter event ID, terminal, or format" /></span
-      ><Button
-        label="Reload archive"
-        icon="pi pi-refresh"
-        :loading="gateway.refreshing"
-        @click="refresh"
-      />
-    </div>
+    <span class="relative"
+      ><i
+        class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" /><InputText
+        v-model="filter"
+        class="w-full !pl-9 sm:w-72"
+        placeholder="Filter event ID, terminal, or format" /></span
+    ><Button
+      label="Reload archive"
+      icon="pi pi-refresh"
+      :loading="gateway.refreshing"
+      @click="refresh"
+    />
   </div>
 
   <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">

@@ -17,29 +17,13 @@ const connection = computed(() => monitorConnection(gateway.socketState))
 
 <template>
   <div
-    class="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"
+    class="mb-4 flex flex-wrap items-center justify-end gap-2 text-xs text-slate-500"
   >
-    <div>
-      <p
-        class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
-      >
-        Administration
-      </p>
-      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
-        Gateway board
-      </h1>
-      <p class="mt-1 text-sm text-slate-600">
-        Current terminal state, durable event collection, and retained protocol
-        activity.
-      </p>
-    </div>
-    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-      <Tag :value="connection.label" :severity="connection.severity" rounded />
-      <span v-if="gateway.lastUpdatedAt">
-        Data refreshed {{ formatShortTime(gateway.lastUpdatedAt) }}
-      </span>
-      <span v-else>Waiting for gateway data</span>
-    </div>
+    <Tag :value="connection.label" :severity="connection.severity" rounded />
+    <span v-if="gateway.lastUpdatedAt">
+      Data refreshed {{ formatShortTime(gateway.lastUpdatedAt) }}
+    </span>
+    <span v-else>Waiting for gateway data</span>
   </div>
 
   <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">

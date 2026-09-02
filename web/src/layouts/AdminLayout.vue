@@ -16,9 +16,6 @@ const navigation = [
 ]
 
 const title = computed(() => route.meta.label || 'PushSDK gateway')
-const description = computed(
-  () => route.meta.description || 'Administrative gateway visibility',
-)
 const administratorInitials = computed(() =>
   (gateway.administratorName || 'AD').slice(0, 2).toUpperCase(),
 )
@@ -116,11 +113,6 @@ async function signOut() {
           @click="navigate(item.to)"
         />
       </nav>
-      <Divider />
-      <p class="text-xs leading-5 text-slate-500">
-        Raw device payloads are available only in Event archive. Gateway
-        activity retains safe operational metadata only.
-      </p>
     </Drawer>
 
     <aside
@@ -153,13 +145,22 @@ async function signOut() {
         />
       </nav>
       <div class="mt-auto border-t border-white/10 px-2 pt-4">
-        <p class="text-xs font-medium uppercase tracking-wide text-slate-500">
+        <div
+          class="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-slate-500"
+        >
           Data boundary
-        </p>
-        <p class="mt-2 text-xs leading-5 text-slate-400">
-          Payloads stay in the event archive. Credentials are never exposed in
-          this console.
-        </p>
+          <Button
+            v-tooltip.right="
+              'Payloads stay in the event archive. Credentials are never exposed in this console.'
+            "
+            icon="pi pi-info-circle"
+            text
+            rounded
+            size="small"
+            class="!h-5 !w-5 !p-0 !text-slate-400 hover:!text-cyan-200"
+            aria-label="About the data boundary"
+          />
+        </div>
       </div>
     </aside>
 
@@ -179,13 +180,21 @@ async function signOut() {
               aria-label="Open navigation"
               @click="mobileNavigationVisible = true"
             />
-            <div class="min-w-0">
-              <p class="truncate text-sm font-semibold text-slate-950">
+            <div class="flex min-w-0 items-center gap-1">
+              <h1 class="truncate text-sm font-semibold text-slate-950">
                 {{ title }}
-              </p>
-              <p class="hidden truncate text-xs text-slate-500 sm:block">
-                {{ description }}
-              </p>
+              </h1>
+              <Button
+                v-tooltip.bottom="
+                  route.meta.description || 'Administrative gateway visibility'
+                "
+                icon="pi pi-info-circle"
+                text
+                rounded
+                size="small"
+                class="!h-6 !w-6 !shrink-0 !p-0 !text-slate-500 hover:!text-slate-950"
+                aria-label="About this view"
+              />
             </div>
           </div>
           <div class="flex items-center gap-2">

@@ -59,40 +59,22 @@ async function changePage(event) {
 </script>
 
 <template>
-  <div
-    class="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"
-  >
-    <div>
-      <p
-        class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
-      >
-        Administrative history
-      </p>
-      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
-        Gateway activity
-      </h1>
-      <p class="mt-1 text-sm text-slate-600">
-        PostgreSQL-backed protocol and administration activity. Device payloads
-        remain only in Event archive.
-      </p>
-    </div>
-    <div class="flex flex-wrap items-center gap-2">
-      <Tag :value="connection.label" :severity="connection.severity" rounded />
-      <Button
-        label="Reconnect stream"
-        icon="pi pi-sync"
-        outlined
-        size="small"
-        @click="gateway.connectMonitor"
-      />
-      <Button
-        label="Reload archive"
-        icon="pi pi-refresh"
-        size="small"
-        :loading="gateway.activityLoading"
-        @click="reload"
-      />
-    </div>
+  <div class="mb-4 flex flex-wrap items-center justify-end gap-2">
+    <Tag :value="connection.label" :severity="connection.severity" rounded />
+    <Button
+      label="Reconnect stream"
+      icon="pi pi-sync"
+      outlined
+      size="small"
+      @click="gateway.connectMonitor"
+    />
+    <Button
+      label="Reload archive"
+      icon="pi pi-refresh"
+      size="small"
+      :loading="gateway.activityLoading"
+      @click="reload"
+    />
   </div>
 
   <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">
