@@ -16,12 +16,24 @@ import (
 )
 
 const (
-	SchemaVersion  = 2
+	SchemaVersion  = 3
 	MajorAlarm     = 1
 	MajorException = 2
 	MajorOperation = 3
 	MajorEvent     = 5
 )
+
+// SubtypeLabel returns only a subtype name explicitly documented by the
+// vendor. A terminal's eventDescription is retained separately as source
+// context and is never used to infer a subtype label.
+func SubtypeLabel(major, subtype int) (string, bool) {
+	switch {
+	case major == MajorEvent && subtype == 75:
+		return "Face Authentication Completed", true
+	default:
+		return "", false
+	}
+}
 
 func MajorEventTypeForCategory(category string) (int, bool) {
 	switch category {
@@ -54,16 +66,41 @@ func CategoryForMajorEventType(major int) (string, bool) {
 }
 
 type Projection struct {
-	MajorEventType   int
-	SubEventType     int
-	EventDescription *string
-	OccurredAt       *time.Time
-	EmployeeNumber   *string
-	EmployeeName     *string
-	CardNumber       *string
-	CardReaderNumber *int
-	DoorNumber       *int
-	SourceIPAddress  *string
+	MajorEventType      int
+	SubEventType        int
+	EventDescription    *string
+	EventState          *string
+	OccurredAt          *time.Time
+	SourceMACAddress    *string
+	ChannelID           *int
+	ActivePostCount     *int
+	ShortSerialNumber   *string
+	DeviceName          *string
+	EmployeeNumber      *string
+	EmployeeName        *string
+	CardNumber          *string
+	CardReaderNumber    *int
+	DoorNumber          *int
+	EventSerialNumber   *int64
+	FrontSerialNumber   *int64
+	UserType            *string
+	CurrentVerifyMode   *string
+	CurrentEvent        *bool
+	Mask                *string
+	PicturesNumber      *int
+	PurePwdVerifyEnable *bool
+	FaceRect            *FaceRect
+	SourceIPAddress     *string
+}
+
+// FaceRect contains the terminal-declared rectangle values. JSON numbers are
+// represented as their literal text so the projection does not round or
+// otherwise normalize the source coordinates.
+type FaceRect struct {
+	Height *string
+	Width  *string
+	X      *string
+	Y      *string
 }
 
 // Picture is an exact JPEG part declared by a terminal multipart event.
@@ -75,20 +112,42 @@ type Picture struct {
 }
 
 type accessControllerEvent struct {
-	MajorEventType   *int    `json:"majorEventType"`
-	SubEventType     *int    `json:"subEventType"`
-	CardNo           *string `json:"cardNo"`
-	Name             *string `json:"name"`
-	EmployeeNoString *string `json:"employeeNoString"`
-	CardReaderNo     *int    `json:"cardReaderNo"`
-	DoorNo           *int    `json:"doorNo"`
+	DeviceName          *string   `json:"deviceName"`
+	MajorEventType      *int      `json:"majorEventType"`
+	SubEventType        *int      `json:"subEventType"`
+	CardNo              *string   `json:"cardNo"`
+	Name                *string   `json:"name"`
+	EmployeeNoString    *string   `json:"employeeNoString"`
+	CardReaderNo        *int      `json:"cardReaderNo"`
+	DoorNo              *int      `json:"doorNo"`
+	SerialNo            *int64    `json:"serialNo"`
+	FrontSerialNo       *int64    `json:"frontSerialNo"`
+	UserType            *string   `json:"userType"`
+	CurrentVerifyMode   *string   `json:"currentVerifyMode"`
+	CurrentEvent        *bool     `json:"currentEvent"`
+	Mask                *string   `json:"mask"`
+	PicturesNumber      *int      `json:"picturesNumber"`
+	PurePwdVerifyEnable *bool     `json:"purePwdVerifyEnable"`
+	FaceRect            *faceRect `json:"FaceRect"`
+}
+
+type faceRect struct {
+	Height *json.Number `json:"height"`
+	Width  *json.Number `json:"width"`
+	X      *json.Number `json:"x"`
+	Y      *json.Number `json:"y"`
 }
 
 type eventDocument struct {
 	EventType             string                 `json:"eventType"`
 	EventDescription      *string                `json:"eventDescription"`
+	EventState            *string                `json:"eventState"`
 	DateTime              *string                `json:"dateTime"`
 	IPAddress             *string                `json:"ipAddress"`
+	MACAddress            *string                `json:"macAddress"`
+	ChannelID             *int                   `json:"channelID"`
+	ActivePostCount       *int                   `json:"activePostCount"`
+	ShortSerialNumber     *string                `json:"shortSerialNumber"`
 	AccessControllerEvent *accessControllerEvent `json:"AccessControllerEvent"`
 }
 
@@ -109,6 +168,7 @@ func Extract(dataFormat, payloadBase64 string) (Projection, bool) {
 		return Projection{}, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
 	var document eventDocument
 	if err := decoder.Decode(&document); err != nil {
 		return Projection{}, false
@@ -133,17 +193,52 @@ func Extract(dataFormat, payloadBase64 string) (Projection, bool) {
 		occurredAt = &parsed
 	}
 	return Projection{
-		MajorEventType:   *access.MajorEventType,
-		SubEventType:     *access.SubEventType,
-		EventDescription: document.EventDescription,
-		OccurredAt:       occurredAt,
-		EmployeeNumber:   access.EmployeeNoString,
-		EmployeeName:     access.Name,
-		CardNumber:       access.CardNo,
-		CardReaderNumber: access.CardReaderNo,
-		DoorNumber:       access.DoorNo,
-		SourceIPAddress:  document.IPAddress,
+		MajorEventType:      *access.MajorEventType,
+		SubEventType:        *access.SubEventType,
+		EventDescription:    document.EventDescription,
+		EventState:          document.EventState,
+		OccurredAt:          occurredAt,
+		SourceMACAddress:    document.MACAddress,
+		ChannelID:           document.ChannelID,
+		ActivePostCount:     document.ActivePostCount,
+		ShortSerialNumber:   document.ShortSerialNumber,
+		DeviceName:          access.DeviceName,
+		EmployeeNumber:      access.EmployeeNoString,
+		EmployeeName:        access.Name,
+		CardNumber:          access.CardNo,
+		CardReaderNumber:    access.CardReaderNo,
+		DoorNumber:          access.DoorNo,
+		EventSerialNumber:   access.SerialNo,
+		FrontSerialNumber:   access.FrontSerialNo,
+		UserType:            access.UserType,
+		CurrentVerifyMode:   access.CurrentVerifyMode,
+		CurrentEvent:        access.CurrentEvent,
+		Mask:                access.Mask,
+		PicturesNumber:      access.PicturesNumber,
+		PurePwdVerifyEnable: access.PurePwdVerifyEnable,
+		FaceRect:            projectFaceRect(access.FaceRect),
+		SourceIPAddress:     document.IPAddress,
 	}, true
+}
+
+func projectFaceRect(source *faceRect) *FaceRect {
+	if source == nil {
+		return nil
+	}
+	return &FaceRect{
+		Height: numberText(source.Height),
+		Width:  numberText(source.Width),
+		X:      numberText(source.X),
+		Y:      numberText(source.Y),
+	}
+}
+
+func numberText(source *json.Number) *string {
+	if source == nil {
+		return nil
+	}
+	value := source.String()
+	return &value
 }
 
 // accessControllerEventPart accepts only the documented multipart wrapper used

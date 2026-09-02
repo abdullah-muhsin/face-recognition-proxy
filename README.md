@@ -84,9 +84,12 @@ This gateway intentionally accepts only the documented protocol forms:
   valid item. An independent, versioned read model recognizes only documented
   JSON `AccessControllerEvent` payloads with explicit numeric category and
   subtype codes, including the documented multipart form part of a
-  `boundaryData` envelope. It never alters the source payload, infers a missing
-  field, or labels an inconsistent subtype; all other JSON, XML, multipart, and
-  binary bodies remain explicitly unclassified in Event Archive.
+  `boundaryData` envelope. It projects only declared event context, including
+  state, device metadata, event sequence values, verification policy, picture
+  count, and face-rectangle coordinates. It never alters the source payload,
+  infers a missing field, or labels an inconsistent subtype: only a
+  model-verified vendor subtype catalog supplies labels. All other JSON, XML,
+  multipart, and binary bodies remain explicitly unclassified in Event Archive.
 - Event Archive decodes that retained source only in the signed-in administrator
   browser: valid UTF-8 is rendered verbatim, while non-text bytes are shown as
   `\xHH`. The UI never displays the vendor's base64 transport value, omits no

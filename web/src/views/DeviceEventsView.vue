@@ -61,6 +61,43 @@ const pictureSource = computed(() => {
   if (!picture) return null
   return `data:${picture.contentType};base64,${picture.dataBase64}`
 })
+const selectedEventContext = computed(() => {
+  const accessEvent = selectedEvent.value?.accessEvent
+  if (!accessEvent) return []
+  return [
+    {
+      label: 'Event type',
+      value: `${accessEvent.majorEventType}/${accessEvent.subEventType}`,
+    },
+    { label: 'Documented subtype', value: accessEvent.subtypeLabel },
+    { label: 'Vendor description', value: accessEvent.eventDescription },
+    { label: 'State', value: accessEvent.eventState },
+    { label: 'Device', value: accessEvent.deviceName },
+    { label: 'Source IP', value: accessEvent.sourceIpAddress },
+    { label: 'Source MAC', value: accessEvent.sourceMacAddress },
+    { label: 'Channel', value: accessEvent.channelId },
+    { label: 'Terminal short serial', value: accessEvent.shortSerialNumber },
+    { label: 'Event serial', value: accessEvent.eventSerialNumber },
+    { label: 'Previous event serial', value: accessEvent.frontSerialNumber },
+    { label: 'Active post count', value: accessEvent.activePostCount },
+    { label: 'User type', value: accessEvent.userType },
+    {
+      label: 'Declared verification mode',
+      value: accessEvent.currentVerifyMode,
+    },
+    { label: 'Current event', value: booleanText(accessEvent.currentEvent) },
+    { label: 'Mask', value: accessEvent.mask },
+    { label: 'Pictures declared', value: accessEvent.picturesNumber },
+    {
+      label: 'Password verification enabled',
+      value: booleanText(accessEvent.purePwdVerifyEnable),
+    },
+    { label: 'Face rectangle', value: faceRectText(accessEvent.faceRect) },
+  ].filter(
+    (item) =>
+      item.value !== null && item.value !== undefined && item.value !== '',
+  )
+})
 const payloadBytes = computed(() => {
   if (!payloadCaptured.value) return null
   try {
@@ -144,8 +181,26 @@ function categoryLabel(accessEvent) {
   return category ? category.label : `Major type ${accessEvent.majorEventType}`
 }
 
+function accessEventTitle(accessEvent) {
+  return accessEvent.subtypeLabel || `Code ${accessEvent.subEventType}`
+}
+
 function subtypeLabel(value) {
   return value.label ? `${value.code} · ${value.label}` : `Code ${value.code}`
+}
+
+function booleanText(value) {
+  if (value === true) return 'true'
+  if (value === false) return 'false'
+  return null
+}
+
+function faceRectText(faceRect) {
+  if (!faceRect) return null
+  const values = ['x', 'y', 'width', 'height']
+    .filter((key) => faceRect[key] !== null && faceRect[key] !== undefined)
+    .map((key) => `${key}=${faceRect[key]}`)
+  return values.length ? values.join(' · ') : null
 }
 
 async function inspectPayload(event) {
@@ -333,13 +388,25 @@ async function copyReadablePayload() {
                   data.accessEvent.subEventType
                 }}</code
               >
+              <Tag
+                v-if="data.accessEvent.eventState"
+                :value="data.accessEvent.eventState"
+                severity="secondary"
+                rounded
+              />
             </div>
             <p
-              v-if="data.accessEvent.eventDescription !== null"
-              class="mt-1 max-w-64 truncate text-slate-700"
-              :title="data.accessEvent.eventDescription"
+              class="mt-1 max-w-64 truncate font-medium text-slate-700"
+              :title="accessEventTitle(data.accessEvent)"
             >
-              {{ data.accessEvent.eventDescription }}
+              {{ accessEventTitle(data.accessEvent) }}
+            </p>
+            <p
+              v-if="data.accessEvent.currentVerifyMode"
+              class="mt-1 max-w-64 truncate text-xs text-slate-500"
+              :title="data.accessEvent.currentVerifyMode"
+            >
+              Declared: {{ data.accessEvent.currentVerifyMode }}
             </p>
           </template>
           <Tag
@@ -503,6 +570,33 @@ async function copyReadablePayload() {
           </p>
         </div>
       </div>
+      <section
+        v-if="selectedEventContext.length"
+        class="mb-5 rounded-xl border border-slate-200"
+        aria-label="Declared access-event context"
+      >
+        <div class="border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <h3 class="text-sm font-semibold text-slate-800">
+            Declared access-event context
+          </h3>
+          <p class="mt-1 text-xs text-slate-500">
+            Values are projected directly from the terminal event and do not
+            interpret the authentication outcome.
+          </p>
+        </div>
+        <dl class="grid gap-x-5 gap-y-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div v-for="item in selectedEventContext" :key="item.label">
+            <dt
+              class="text-xs font-medium uppercase tracking-wide text-slate-400"
+            >
+              {{ item.label }}
+            </dt>
+            <dd class="mt-1 break-words font-medium text-slate-700">
+              {{ item.value }}
+            </dd>
+          </div>
+        </dl>
+      </section>
       <Message severity="info" :closable="false">
         The exact event bytes are shown below. Valid UTF-8 is rendered verbatim
         without parsing or formatting. In mixed or binary payloads, non-text

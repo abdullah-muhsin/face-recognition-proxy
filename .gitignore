@@ -4,6 +4,11 @@
 /web/node_modules/
 /web/dist/
 
+# Vendor SDKs and documentation are local protocol references, not application
+# source. They may contain release bundles, certificates, local databases, and
+# machine-specific build outputs.
+/third_party/
+
 docs/**/credentials.local.md
 docs/**/.env.local
 

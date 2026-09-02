@@ -326,17 +326,42 @@ type DeviceEvent struct {
 // AccessControllerEvent. It is nil when the raw source event is not that
 // declared form; the raw archive remains available in either case.
 type AccessEvent struct {
-	Category         string     `json:"category,omitempty"`
-	MajorEventType   int        `json:"majorEventType"`
-	SubEventType     int        `json:"subEventType"`
-	EventDescription *string    `json:"eventDescription"`
-	OccurredAt       *time.Time `json:"occurredAt"`
-	EmployeeNumber   *string    `json:"employeeNumber"`
-	EmployeeName     *string    `json:"employeeName"`
-	CardNumber       *string    `json:"cardNumber"`
-	CardReaderNumber *int       `json:"cardReaderNumber"`
-	DoorNumber       *int       `json:"doorNumber"`
-	SourceIPAddress  *string    `json:"sourceIpAddress"`
+	Category            string               `json:"category,omitempty"`
+	MajorEventType      int                  `json:"majorEventType"`
+	SubEventType        int                  `json:"subEventType"`
+	SubtypeLabel        string               `json:"subtypeLabel,omitempty"`
+	EventDescription    *string              `json:"eventDescription"`
+	EventState          *string              `json:"eventState"`
+	OccurredAt          *time.Time           `json:"occurredAt"`
+	SourceIPAddress     *string              `json:"sourceIpAddress"`
+	SourceMACAddress    *string              `json:"sourceMacAddress"`
+	ChannelID           *int                 `json:"channelId"`
+	ActivePostCount     *int                 `json:"activePostCount"`
+	ShortSerialNumber   *string              `json:"shortSerialNumber"`
+	DeviceName          *string              `json:"deviceName"`
+	EmployeeNumber      *string              `json:"employeeNumber"`
+	EmployeeName        *string              `json:"employeeName"`
+	CardNumber          *string              `json:"cardNumber"`
+	CardReaderNumber    *int                 `json:"cardReaderNumber"`
+	DoorNumber          *int                 `json:"doorNumber"`
+	EventSerialNumber   *int64               `json:"eventSerialNumber"`
+	FrontSerialNumber   *int64               `json:"frontSerialNumber"`
+	UserType            *string              `json:"userType"`
+	CurrentVerifyMode   *string              `json:"currentVerifyMode"`
+	CurrentEvent        *bool                `json:"currentEvent"`
+	Mask                *string              `json:"mask"`
+	PicturesNumber      *int                 `json:"picturesNumber"`
+	PurePwdVerifyEnable *bool                `json:"purePwdVerifyEnable"`
+	FaceRect            *AccessEventFaceRect `json:"faceRect,omitempty"`
+}
+
+// AccessEventFaceRect preserves the event's declared JSON number text. It is
+// not a display-space or image-space transformation.
+type AccessEventFaceRect struct {
+	Height *string `json:"height"`
+	Width  *string `json:"width"`
+	X      *string `json:"x"`
+	Y      *string `json:"y"`
 }
 
 type AccessEventSubtype struct {
@@ -469,7 +494,11 @@ func (s *Store) QueryDeviceEvents(ctx context.Context, query DeviceEventQuery) (
 	arguments = append(arguments, query.Limit, query.Offset)
 	rows, err := s.pool.Query(ctx, `SELECT de.id, de.terminal_serial_number, de.vendor_event_id, de.data_format, de.payload_base64 IS NOT NULL, de.received_at,
 		ace.major_event_type, ace.sub_event_type, ace.event_description, ace.occurred_at, ace.employee_number, ace.employee_name,
-		ace.card_number, ace.card_reader_number, ace.door_number, ace.source_ip_address
+		ace.card_number, ace.card_reader_number, ace.door_number, ace.source_ip_address,
+		ace.event_state, ace.source_mac_address, ace.channel_id, ace.active_post_count,
+		ace.short_serial_number, ace.device_name, ace.event_serial_number, ace.front_serial_number,
+		ace.user_type, ace.current_verify_mode, ace.current_event, ace.mask, ace.pictures_number,
+		ace.pure_pwd_verify_enable, ace.face_rect_height, ace.face_rect_width, ace.face_rect_x, ace.face_rect_y
 		FROM device_events de
 		LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
 		WHERE `+where+` ORDER BY de.received_at DESC, de.id DESC LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex), arguments...)
@@ -481,16 +510,25 @@ func (s *Store) QueryDeviceEvents(ctx context.Context, query DeviceEventQuery) (
 	for rows.Next() {
 		var event DeviceEvent
 		var access AccessEvent
+		var faceRect AccessEventFaceRect
 		var major, subtype *int
 		if err := rows.Scan(&event.ID, &event.TerminalSerialNumber, &event.VendorEventID, &event.DataFormat, &event.PayloadAvailable, &event.ReceivedAt,
 			&major, &subtype, &access.EventDescription, &access.OccurredAt, &access.EmployeeNumber, &access.EmployeeName,
-			&access.CardNumber, &access.CardReaderNumber, &access.DoorNumber, &access.SourceIPAddress); err != nil {
+			&access.CardNumber, &access.CardReaderNumber, &access.DoorNumber, &access.SourceIPAddress,
+			&access.EventState, &access.SourceMACAddress, &access.ChannelID, &access.ActivePostCount,
+			&access.ShortSerialNumber, &access.DeviceName, &access.EventSerialNumber, &access.FrontSerialNumber,
+			&access.UserType, &access.CurrentVerifyMode, &access.CurrentEvent, &access.Mask, &access.PicturesNumber,
+			&access.PurePwdVerifyEnable, &faceRect.Height, &faceRect.Width, &faceRect.X, &faceRect.Y); err != nil {
 			return page, err
 		}
 		if major != nil && subtype != nil {
 			access.MajorEventType = *major
 			access.SubEventType = *subtype
 			access.Category, _ = accesscontrol.CategoryForMajorEventType(*major)
+			access.SubtypeLabel, _ = accesscontrol.SubtypeLabel(*major, *subtype)
+			if faceRect.Height != nil || faceRect.Width != nil || faceRect.X != nil || faceRect.Y != nil {
+				access.FaceRect = &faceRect
+			}
 			event.AccessEvent = &access
 		}
 		page.Events = append(page.Events, event)
@@ -526,12 +564,7 @@ func (s *Store) accessEventSubtypes(ctx context.Context, query DeviceEventQuery)
 	}
 	query.SubEventType = nil
 	clauses, arguments := deviceEventClauses(query)
-	rows, err := s.pool.Query(ctx, `SELECT ace.sub_event_type,
-		CASE
-			WHEN count(*) = count(ace.event_description) AND count(DISTINCT ace.event_description) = 1
-			THEN min(ace.event_description)
-			ELSE NULL
-		END AS label
+	rows, err := s.pool.Query(ctx, `SELECT ace.sub_event_type
 		FROM device_events de
 		JOIN access_event_projections ace ON ace.device_event_id = de.id
 		WHERE `+strings.Join(clauses, " AND ")+`
@@ -544,8 +577,11 @@ func (s *Store) accessEventSubtypes(ctx context.Context, query DeviceEventQuery)
 	subtypes := []AccessEventSubtype{}
 	for rows.Next() {
 		var subtype AccessEventSubtype
-		if err := rows.Scan(&subtype.Code, &subtype.Label); err != nil {
+		if err := rows.Scan(&subtype.Code); err != nil {
 			return nil, err
+		}
+		if label, known := accesscontrol.SubtypeLabel(*query.MajorEventType, subtype.Code); known {
+			subtype.Label = &label
 		}
 		subtypes = append(subtypes, subtype)
 	}
@@ -570,17 +606,47 @@ func insertAccessEventProjection(ctx context.Context, tx pgx.Tx, deviceEventID i
 				card_number = NULL,
 				card_reader_number = NULL,
 				door_number = NULL,
-				source_ip_address = NULL`, deviceEventID, accesscontrol.SchemaVersion)
+				source_ip_address = NULL,
+				event_state = NULL,
+				source_mac_address = NULL,
+				channel_id = NULL,
+				active_post_count = NULL,
+				short_serial_number = NULL,
+				device_name = NULL,
+				event_serial_number = NULL,
+				front_serial_number = NULL,
+				user_type = NULL,
+				current_verify_mode = NULL,
+				current_event = NULL,
+				mask = NULL,
+				pictures_number = NULL,
+				pure_pwd_verify_enable = NULL,
+				face_rect_height = NULL,
+				face_rect_width = NULL,
+				face_rect_x = NULL,
+				face_rect_y = NULL`, deviceEventID, accesscontrol.SchemaVersion)
 		if err != nil {
 			return fmt.Errorf("record unclassified access event: %w", err)
 		}
 		return nil
 	}
+	var faceRectHeight, faceRectWidth, faceRectX, faceRectY *string
+	if projection.FaceRect != nil {
+		faceRectHeight = projection.FaceRect.Height
+		faceRectWidth = projection.FaceRect.Width
+		faceRectX = projection.FaceRect.X
+		faceRectY = projection.FaceRect.Y
+	}
 	_, err := tx.Exec(ctx, `INSERT INTO access_event_projections
 		(device_event_id, schema_version, classification_status, major_event_type, sub_event_type,
 		event_description, occurred_at, employee_number, employee_name, card_number,
-		card_reader_number, door_number, source_ip_address)
-		VALUES ($1, $2, 'classified', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		card_reader_number, door_number, source_ip_address, event_state, source_mac_address,
+		channel_id, active_post_count, short_serial_number, device_name, event_serial_number,
+		front_serial_number, user_type, current_verify_mode, current_event, mask, pictures_number,
+		pure_pwd_verify_enable, face_rect_height, face_rect_width, face_rect_x, face_rect_y)
+		VALUES ($1, $2, 'classified', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+		$13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27,
+		$28, $29, $30)
 		ON CONFLICT (device_event_id) DO UPDATE SET
 		schema_version = EXCLUDED.schema_version,
 		classification_status = EXCLUDED.classification_status,
@@ -593,10 +659,32 @@ func insertAccessEventProjection(ctx context.Context, tx pgx.Tx, deviceEventID i
 		card_number = EXCLUDED.card_number,
 		card_reader_number = EXCLUDED.card_reader_number,
 		door_number = EXCLUDED.door_number,
-		source_ip_address = EXCLUDED.source_ip_address`,
+		source_ip_address = EXCLUDED.source_ip_address,
+		event_state = EXCLUDED.event_state,
+		source_mac_address = EXCLUDED.source_mac_address,
+		channel_id = EXCLUDED.channel_id,
+		active_post_count = EXCLUDED.active_post_count,
+		short_serial_number = EXCLUDED.short_serial_number,
+		device_name = EXCLUDED.device_name,
+		event_serial_number = EXCLUDED.event_serial_number,
+		front_serial_number = EXCLUDED.front_serial_number,
+		user_type = EXCLUDED.user_type,
+		current_verify_mode = EXCLUDED.current_verify_mode,
+		current_event = EXCLUDED.current_event,
+		mask = EXCLUDED.mask,
+		pictures_number = EXCLUDED.pictures_number,
+		pure_pwd_verify_enable = EXCLUDED.pure_pwd_verify_enable,
+		face_rect_height = EXCLUDED.face_rect_height,
+		face_rect_width = EXCLUDED.face_rect_width,
+		face_rect_x = EXCLUDED.face_rect_x,
+		face_rect_y = EXCLUDED.face_rect_y`,
 		deviceEventID, accesscontrol.SchemaVersion, projection.MajorEventType, projection.SubEventType,
 		projection.EventDescription, projection.OccurredAt, projection.EmployeeNumber, projection.EmployeeName,
-		projection.CardNumber, projection.CardReaderNumber, projection.DoorNumber, projection.SourceIPAddress)
+		projection.CardNumber, projection.CardReaderNumber, projection.DoorNumber, projection.SourceIPAddress,
+		projection.EventState, projection.SourceMACAddress, projection.ChannelID, projection.ActivePostCount,
+		projection.ShortSerialNumber, projection.DeviceName, projection.EventSerialNumber, projection.FrontSerialNumber,
+		projection.UserType, projection.CurrentVerifyMode, projection.CurrentEvent, projection.Mask, projection.PicturesNumber,
+		projection.PurePwdVerifyEnable, faceRectHeight, faceRectWidth, faceRectX, faceRectY)
 	if err != nil {
 		return fmt.Errorf("record classified access event: %w", err)
 	}
