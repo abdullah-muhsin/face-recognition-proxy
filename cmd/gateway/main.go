@@ -43,6 +43,13 @@ func run(logger *slog.Logger) error {
 	if err := data.Migrate(ctx, cfg.MigrationsDir); err != nil {
 		return err
 	}
+	backfilled, err := data.BackfillAccessEventProjections(ctx)
+	if err != nil {
+		return fmt.Errorf("backfill access-event projections: %w", err)
+	}
+	if backfilled > 0 {
+		logger.Info("backfilled access-event projections", "records", backfilled)
+	}
 	if err := data.SynchronizeConfiguredTerminals(ctx, cfg.Terminals); err != nil {
 		return err
 	}

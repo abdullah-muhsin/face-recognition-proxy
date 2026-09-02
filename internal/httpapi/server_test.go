@@ -10,6 +10,41 @@ import (
 	"github.com/itplus/pushsdk-gateway/internal/config"
 )
 
+func TestDeviceEventQueryUsesExplicitCategoryAndSubtypeCodes(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/events?category=event&subtype=75&terminal=DS-K1", nil)
+	query, err := deviceEventQuery(request, 25, 0)
+	if err != nil {
+		t.Fatalf("deviceEventQuery() error = %v", err)
+	}
+	if query.MajorEventType == nil || *query.MajorEventType != 5 {
+		t.Fatalf("major event type = %#v, want 5", query.MajorEventType)
+	}
+	if query.SubEventType == nil || *query.SubEventType != 75 {
+		t.Fatalf("sub event type = %#v, want 75", query.SubEventType)
+	}
+	if query.Terminal != "DS-K1" {
+		t.Fatalf("terminal = %q, want DS-K1", query.Terminal)
+	}
+}
+
+func TestDeviceEventQueryRejectsAmbiguousAndInvalidFilters(t *testing.T) {
+	for _, rawQuery := range []string{
+		"category=all&subtype=75",
+		"subtype=75",
+		"category=event&category=alarm",
+		"category=unknown",
+		"category=event&subtype=-1",
+		"category=event&extra=value",
+	} {
+		t.Run(rawQuery, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/events?"+rawQuery, nil)
+			if _, err := deviceEventQuery(request, 25, 0); err == nil {
+				t.Fatal("deviceEventQuery() accepted invalid filters")
+			}
+		})
+	}
+}
+
 func TestWebAppServesVueEntryForHistoryRoutes(t *testing.T) {
 	webDir := t.TempDir()
 	writeWebFile(t, webDir, "index.html", "administration console")

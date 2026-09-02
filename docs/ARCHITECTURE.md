@@ -25,9 +25,13 @@ denied at Nginx and additionally CIDR-checked by Go.
   configured PBKDF2 digest, durably checkpointed challenge lifecycle, AES-CBC
   encryption, exact event validation, and action-specific acknowledgement
   generation.
+- `internal/accesscontrol`: versioned, declared JSON `AccessControllerEvent`
+  projection. It recognizes only the documented event identity and category
+  codes; every other raw event remains unclassified.
 - `internal/store`: PostgreSQL migrations, terminal state, exact raw device
-  event source values, gateway activity history, PushSDK session checkpoints,
-  administrator users, and hashed administrator sessions.
+  event source values, the one-to-one access-event projection, gateway activity
+  history, PushSDK session checkpoints, administrator users, and hashed
+  administrator sessions.
 - `internal/httpapi`: session-authenticated API, static console delivery,
   origin-checked WebSocket, private metrics, and health endpoints.
 - `internal/monitor`: in-memory fan-out of activity records that have already
@@ -42,6 +46,15 @@ database fallback, previous-challenge acceptance, or automatic terminal
 reconfiguration. Device events retain the exact source `eventList.data` value;
 gateway activity is separate safe operational metadata, not a parsed
 compatibility model or a second copy of the device payload.
+
+The access-event projection is not a compatibility parser. It accepts only a
+declared `jsonData` `AccessControllerEvent` containing numeric
+`majorEventType` and `subEventType` fields. Its raw source continues to be the
+forensic record. Missing, malformed, binary, XML, or other vendor event forms
+are retained and receive an explicit unclassified projection status. No field
+is inferred, no device time is substituted with receipt time, and subtype
+labels are returned only when the retained source description is consistent for
+that exact category/code.
 
 Adding a new terminal capability is a schema and protocol change: document the
 vendor wire form, add a migration and tests, then release it. Do not add a

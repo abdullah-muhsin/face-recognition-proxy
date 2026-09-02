@@ -20,9 +20,10 @@ requests by path and upgrades the browser monitoring WebSocket only at `/ws/`.
 
 ## Data and security model
 
-PostgreSQL stores registered terminals, raw device-event source values,
-gateway activity, authenticated PushSDK protocol state, and hashed administrator
-sessions. Every valid PushSDK `eventList` item is deduplicated with the
+PostgreSQL stores registered terminals, raw device-event source values, a
+strict one-to-one access-event projection, gateway activity, authenticated
+PushSDK protocol state, and hashed administrator sessions. Every valid PushSDK
+`eventList` item is deduplicated with the
 terminal serial plus its vendor UUID, so device retries are safe and do not
 create duplicate events.
 
@@ -80,8 +81,11 @@ This gateway intentionally accepts only the documented protocol forms:
 - Events use an exact JSON envelope, base64 data, unique vendor UUIDs, and one
   of `jsonData`, `xmlData`, `boundaryData`, or empty `noData`.
 - The source `eventList.data` base64 string is persisted verbatim for every
-  valid item. Its inner JSON, XML, multipart, or binary body is not parsed,
-  labelled, reconstructed, or filtered by the gateway.
+  valid item. An independent, versioned read model recognizes only documented
+  JSON `AccessControllerEvent` payloads with explicit numeric category and
+  subtype codes. It never alters the source payload, infers a missing field,
+  or labels an inconsistent subtype; all other JSON, XML, multipart, and binary
+  bodies remain explicitly unclassified in Event Archive.
 - Event Archive decodes that retained source only in the signed-in administrator
   browser: valid UTF-8 is rendered verbatim, while non-text bytes are shown as
   `\xHH`. The UI never displays the vendor's base64 transport value, omits no

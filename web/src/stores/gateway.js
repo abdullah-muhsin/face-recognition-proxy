@@ -27,6 +27,8 @@ export const useGatewayStore = defineStore('gateway', () => {
   const deviceEvents = ref([])
   const deviceEventsTotal = ref(0)
   const deviceEventsOffset = ref(0)
+  const deviceEventQuery = ref({ category: 'all', subtype: null, terminal: '' })
+  const deviceEventSubtypes = ref([])
   const gatewayActivities = ref([])
   const gatewayActivitiesTotal = ref(0)
   const gatewayActivitiesOffset = ref(0)
@@ -71,15 +73,26 @@ export const useGatewayStore = defineStore('gateway', () => {
     overview.value = await request('/api/v1/admin/overview')
   }
 
-  async function loadDeviceEvents(offset = deviceEventsOffset.value) {
+  async function loadDeviceEvents(
+    offset = deviceEventsOffset.value,
+    query = deviceEventQuery.value,
+  ) {
     eventsLoading.value = true
     try {
-      const page = await request(
-        `/api/v1/admin/events?limit=${pageSize}&offset=${offset}`,
-      )
+      const parameters = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String(offset),
+        category: query.category,
+      })
+      if (query.subtype !== null)
+        parameters.set('subtype', String(query.subtype))
+      if (query.terminal !== '') parameters.set('terminal', query.terminal)
+      const page = await request(`/api/v1/admin/events?${parameters}`)
       deviceEventsOffset.value = offset
+      deviceEventQuery.value = { ...query }
       deviceEvents.value = page.events
       deviceEventsTotal.value = page.total
+      deviceEventSubtypes.value = page.subtypes
     } finally {
       eventsLoading.value = false
     }
@@ -269,6 +282,8 @@ export const useGatewayStore = defineStore('gateway', () => {
     deviceEvents.value = []
     deviceEventsTotal.value = 0
     deviceEventsOffset.value = 0
+    deviceEventQuery.value = { category: 'all', subtype: null, terminal: '' }
+    deviceEventSubtypes.value = []
     gatewayActivities.value = []
     gatewayActivitiesTotal.value = 0
     gatewayActivitiesOffset.value = 0
@@ -294,6 +309,8 @@ export const useGatewayStore = defineStore('gateway', () => {
     deviceEvents,
     deviceEventsTotal,
     deviceEventsOffset,
+    deviceEventQuery,
+    deviceEventSubtypes,
     gatewayActivities,
     gatewayActivitiesTotal,
     gatewayActivitiesOffset,

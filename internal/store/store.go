@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/itplus/pushsdk-gateway/internal/accesscontrol"
 	"github.com/itplus/pushsdk-gateway/internal/activity"
 	"github.com/itplus/pushsdk-gateway/internal/config"
 	"github.com/jackc/pgx/v5"
@@ -311,12 +313,35 @@ func (s *Store) DeletePushSDKSession(ctx context.Context, terminalSerial string)
 }
 
 type DeviceEvent struct {
-	ID                   int64     `json:"id"`
-	TerminalSerialNumber string    `json:"terminalSerialNumber"`
-	VendorEventID        string    `json:"vendorEventId"`
-	DataFormat           string    `json:"dataFormat"`
-	PayloadAvailable     bool      `json:"payloadAvailable"`
-	ReceivedAt           time.Time `json:"receivedAt"`
+	ID                   int64        `json:"id"`
+	TerminalSerialNumber string       `json:"terminalSerialNumber"`
+	VendorEventID        string       `json:"vendorEventId"`
+	DataFormat           string       `json:"dataFormat"`
+	PayloadAvailable     bool         `json:"payloadAvailable"`
+	ReceivedAt           time.Time    `json:"receivedAt"`
+	AccessEvent          *AccessEvent `json:"accessEvent,omitempty"`
+}
+
+// AccessEvent is a strict projection of a documented JSON
+// AccessControllerEvent. It is nil when the raw source event is not that
+// declared form; the raw archive remains available in either case.
+type AccessEvent struct {
+	Category         string     `json:"category,omitempty"`
+	MajorEventType   int        `json:"majorEventType"`
+	SubEventType     int        `json:"subEventType"`
+	EventDescription *string    `json:"eventDescription"`
+	OccurredAt       *time.Time `json:"occurredAt"`
+	EmployeeNumber   *string    `json:"employeeNumber"`
+	EmployeeName     *string    `json:"employeeName"`
+	CardNumber       *string    `json:"cardNumber"`
+	CardReaderNumber *int       `json:"cardReaderNumber"`
+	DoorNumber       *int       `json:"doorNumber"`
+	SourceIPAddress  *string    `json:"sourceIpAddress"`
+}
+
+type AccessEventSubtype struct {
+	Code  int     `json:"code"`
+	Label *string `json:"label,omitempty"`
 }
 
 type DeviceEventPayload struct {
@@ -351,15 +376,25 @@ func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEv
 	defer tx.Rollback(ctx)
 	persisted := make([]DeviceEventPersistence, len(events))
 	for index, event := range events {
-		result, err := tx.Exec(ctx, `INSERT INTO device_events
+		var id int64
+		err = tx.QueryRow(ctx, `INSERT INTO device_events
 			(terminal_serial_number, vendor_event_id, data_format, payload_base64)
 			VALUES ($1,$2,$3,$4)
-			ON CONFLICT (terminal_serial_number, vendor_event_id) DO NOTHING`,
-			event.TerminalSerialNumber, event.VendorEventID, event.DataFormat, event.PayloadBase64)
+			ON CONFLICT (terminal_serial_number, vendor_event_id) DO NOTHING
+			RETURNING id`, event.TerminalSerialNumber, event.VendorEventID, event.DataFormat, event.PayloadBase64).Scan(&id)
+		inserted := err == nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = nil
+		}
 		if err != nil {
 			return nil, fmt.Errorf("insert device event: %w", err)
 		}
-		persisted[index].Inserted = result.RowsAffected() == 1
+		persisted[index].Inserted = inserted
+		if inserted {
+			if err := insertAccessEventProjection(ctx, tx, id, event); err != nil {
+				return nil, err
+			}
+		}
 		kind, message := activity.KindDeviceEventDuplicate, "device event payload was already retained"
 		if persisted[index].Inserted {
 			kind, message = activity.KindDeviceEventPersisted, "device event payload persisted"
@@ -385,8 +420,17 @@ func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEv
 }
 
 type DeviceEventPage struct {
-	Events []DeviceEvent `json:"events"`
-	Total  int64         `json:"total"`
+	Events   []DeviceEvent        `json:"events"`
+	Total    int64                `json:"total"`
+	Subtypes []AccessEventSubtype `json:"subtypes"`
+}
+
+type DeviceEventQuery struct {
+	Limit          int
+	Offset         int
+	MajorEventType *int
+	SubEventType   *int
+	Terminal       string
 }
 
 type Overview struct {
@@ -408,12 +452,27 @@ func (s *Store) Overview(ctx context.Context) (Overview, error) {
 }
 
 func (s *Store) DeviceEvents(ctx context.Context, limit, offset int) (DeviceEventPage, error) {
+	return s.QueryDeviceEvents(ctx, DeviceEventQuery{Limit: limit, Offset: offset})
+}
+
+func (s *Store) QueryDeviceEvents(ctx context.Context, query DeviceEventQuery) (DeviceEventPage, error) {
 	var page DeviceEventPage
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM device_events`).Scan(&page.Total); err != nil {
+	clauses, arguments := deviceEventClauses(query)
+	where := strings.Join(clauses, " AND ")
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM device_events de
+		LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
+		WHERE `+where, arguments...).Scan(&page.Total); err != nil {
 		return page, err
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, terminal_serial_number, vendor_event_id, data_format, payload_base64 IS NOT NULL, received_at
-		FROM device_events ORDER BY received_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
+	limitIndex := len(arguments) + 1
+	offsetIndex := len(arguments) + 2
+	arguments = append(arguments, query.Limit, query.Offset)
+	rows, err := s.pool.Query(ctx, `SELECT de.id, de.terminal_serial_number, de.vendor_event_id, de.data_format, de.payload_base64 IS NOT NULL, de.received_at,
+		ace.major_event_type, ace.sub_event_type, ace.event_description, ace.occurred_at, ace.employee_number, ace.employee_name,
+		ace.card_number, ace.card_reader_number, ace.door_number, ace.source_ip_address
+		FROM device_events de
+		LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
+		WHERE `+where+` ORDER BY de.received_at DESC, de.id DESC LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex), arguments...)
 	if err != nil {
 		return page, err
 	}
@@ -421,12 +480,166 @@ func (s *Store) DeviceEvents(ctx context.Context, limit, offset int) (DeviceEven
 	page.Events = []DeviceEvent{}
 	for rows.Next() {
 		var event DeviceEvent
-		if err := rows.Scan(&event.ID, &event.TerminalSerialNumber, &event.VendorEventID, &event.DataFormat, &event.PayloadAvailable, &event.ReceivedAt); err != nil {
+		var access AccessEvent
+		var major, subtype *int
+		if err := rows.Scan(&event.ID, &event.TerminalSerialNumber, &event.VendorEventID, &event.DataFormat, &event.PayloadAvailable, &event.ReceivedAt,
+			&major, &subtype, &access.EventDescription, &access.OccurredAt, &access.EmployeeNumber, &access.EmployeeName,
+			&access.CardNumber, &access.CardReaderNumber, &access.DoorNumber, &access.SourceIPAddress); err != nil {
 			return page, err
+		}
+		if major != nil && subtype != nil {
+			access.MajorEventType = *major
+			access.SubEventType = *subtype
+			access.Category, _ = accesscontrol.CategoryForMajorEventType(*major)
+			event.AccessEvent = &access
 		}
 		page.Events = append(page.Events, event)
 	}
-	return page, rows.Err()
+	if err := rows.Err(); err != nil {
+		return page, err
+	}
+	page.Subtypes, err = s.accessEventSubtypes(ctx, query)
+	return page, err
+}
+
+func deviceEventClauses(query DeviceEventQuery) ([]string, []any) {
+	clauses := []string{"TRUE"}
+	arguments := []any{}
+	if query.MajorEventType != nil {
+		arguments = append(arguments, *query.MajorEventType)
+		clauses = append(clauses, "ace.classification_status = 'classified'", "ace.major_event_type = $"+strconv.Itoa(len(arguments)))
+	}
+	if query.SubEventType != nil {
+		arguments = append(arguments, *query.SubEventType)
+		clauses = append(clauses, "ace.classification_status = 'classified'", "ace.sub_event_type = $"+strconv.Itoa(len(arguments)))
+	}
+	if query.Terminal != "" {
+		arguments = append(arguments, query.Terminal)
+		clauses = append(clauses, "de.terminal_serial_number = $"+strconv.Itoa(len(arguments)))
+	}
+	return clauses, arguments
+}
+
+func (s *Store) accessEventSubtypes(ctx context.Context, query DeviceEventQuery) ([]AccessEventSubtype, error) {
+	if query.MajorEventType == nil {
+		return []AccessEventSubtype{}, nil
+	}
+	query.SubEventType = nil
+	clauses, arguments := deviceEventClauses(query)
+	rows, err := s.pool.Query(ctx, `SELECT ace.sub_event_type,
+		CASE
+			WHEN count(*) = count(ace.event_description) AND count(DISTINCT ace.event_description) = 1
+			THEN min(ace.event_description)
+			ELSE NULL
+		END AS label
+		FROM device_events de
+		JOIN access_event_projections ace ON ace.device_event_id = de.id
+		WHERE `+strings.Join(clauses, " AND ")+`
+		GROUP BY ace.sub_event_type
+		ORDER BY ace.sub_event_type`, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	subtypes := []AccessEventSubtype{}
+	for rows.Next() {
+		var subtype AccessEventSubtype
+		if err := rows.Scan(&subtype.Code, &subtype.Label); err != nil {
+			return nil, err
+		}
+		subtypes = append(subtypes, subtype)
+	}
+	return subtypes, rows.Err()
+}
+
+func insertAccessEventProjection(ctx context.Context, tx pgx.Tx, deviceEventID int64, event NewDeviceEvent) error {
+	projection, classified := accesscontrol.Extract(event.DataFormat, event.PayloadBase64)
+	if !classified {
+		_, err := tx.Exec(ctx, `INSERT INTO access_event_projections
+			(device_event_id, schema_version, classification_status)
+			VALUES ($1, $2, 'unclassified')`, deviceEventID, accesscontrol.SchemaVersion)
+		if err != nil {
+			return fmt.Errorf("record unclassified access event: %w", err)
+		}
+		return nil
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO access_event_projections
+		(device_event_id, schema_version, classification_status, major_event_type, sub_event_type,
+		event_description, occurred_at, employee_number, employee_name, card_number,
+		card_reader_number, door_number, source_ip_address)
+		VALUES ($1, $2, 'classified', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		deviceEventID, accesscontrol.SchemaVersion, projection.MajorEventType, projection.SubEventType,
+		projection.EventDescription, projection.OccurredAt, projection.EmployeeNumber, projection.EmployeeName,
+		projection.CardNumber, projection.CardReaderNumber, projection.DoorNumber, projection.SourceIPAddress)
+	if err != nil {
+		return fmt.Errorf("record classified access event: %w", err)
+	}
+	return nil
+}
+
+// BackfillAccessEventProjections applies the same strict extractor to raw
+// archive rows that predate the projection. Every eligible row receives one
+// terminal status, so completed rows are never interpreted again.
+func (s *Store) BackfillAccessEventProjections(ctx context.Context) (int64, error) {
+	var projected int64
+	for {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return projected, err
+		}
+		rows, err := tx.Query(ctx, `SELECT de.id, de.data_format, de.payload_base64
+			FROM device_events de
+			LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
+			WHERE ace.device_event_id IS NULL
+			ORDER BY de.id
+			LIMIT 500
+			FOR UPDATE OF de SKIP LOCKED`)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return projected, fmt.Errorf("load event projection backfill batch: %w", err)
+		}
+		var batch []struct {
+			id     int64
+			format string
+			data   *string
+		}
+		for rows.Next() {
+			var row struct {
+				id     int64
+				format string
+				data   *string
+			}
+			if err := rows.Scan(&row.id, &row.format, &row.data); err != nil {
+				rows.Close()
+				_ = tx.Rollback(ctx)
+				return projected, fmt.Errorf("scan event projection backfill batch: %w", err)
+			}
+			batch = append(batch, row)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			_ = tx.Rollback(ctx)
+			return projected, fmt.Errorf("iterate event projection backfill batch: %w", err)
+		}
+		rows.Close()
+		for _, row := range batch {
+			payload := ""
+			if row.data != nil {
+				payload = *row.data
+			}
+			if err := insertAccessEventProjection(ctx, tx, row.id, NewDeviceEvent{DataFormat: row.format, PayloadBase64: payload}); err != nil {
+				_ = tx.Rollback(ctx)
+				return projected, err
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return projected, fmt.Errorf("commit event projection backfill batch: %w", err)
+		}
+		projected += int64(len(batch))
+		if len(batch) == 0 {
+			return projected, nil
+		}
+	}
 }
 
 func (s *Store) DeviceEventPayload(ctx context.Context, id int64) (DeviceEventPayload, bool, error) {

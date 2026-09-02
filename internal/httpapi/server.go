@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/itplus/pushsdk-gateway/internal/accesscontrol"
 	"github.com/itplus/pushsdk-gateway/internal/activity"
 	"github.com/itplus/pushsdk-gateway/internal/config"
 	"github.com/itplus/pushsdk-gateway/internal/monitor"
@@ -182,12 +183,57 @@ func (s *Server) deviceEvents(writer http.ResponseWriter, request *http.Request)
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	page, err := s.store.DeviceEvents(request.Context(), limit, offset)
+	query, err := deviceEventQuery(request, limit, offset)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := s.store.QueryDeviceEvents(request.Context(), query)
 	if err != nil {
 		s.internalError(writer, "load device events", err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, page)
+}
+
+func deviceEventQuery(request *http.Request, limit, offset int) (store.DeviceEventQuery, error) {
+	values := request.URL.Query()
+	for key, values := range values {
+		switch key {
+		case "limit", "offset", "category", "subtype", "terminal":
+		default:
+			return store.DeviceEventQuery{}, fmt.Errorf("unsupported events query parameter %q", key)
+		}
+		if len(values) != 1 {
+			return store.DeviceEventQuery{}, fmt.Errorf("%s must appear at most once", key)
+		}
+	}
+	query := store.DeviceEventQuery{Limit: limit, Offset: offset}
+	category, categoryPresent := values["category"]
+	if categoryPresent && category[0] != "all" {
+		major, known := accesscontrol.MajorEventTypeForCategory(category[0])
+		if !known {
+			return store.DeviceEventQuery{}, errors.New("category must be one of all, alarm, exception, operation, or event")
+		}
+		query.MajorEventType = &major
+	}
+	if subtype, present := values["subtype"]; present {
+		if !categoryPresent || query.MajorEventType == nil {
+			return store.DeviceEventQuery{}, errors.New("subtype requires a category")
+		}
+		value, err := strconv.Atoi(subtype[0])
+		if err != nil || value < 0 {
+			return store.DeviceEventQuery{}, errors.New("subtype must be a non-negative integer")
+		}
+		query.SubEventType = &value
+	}
+	if terminal, present := values["terminal"]; present {
+		if terminal[0] == "" {
+			return store.DeviceEventQuery{}, errors.New("terminal must not be empty")
+		}
+		query.Terminal = terminal[0]
+	}
+	return query, nil
 }
 
 func (s *Server) deviceEventPayload(writer http.ResponseWriter, request *http.Request) {

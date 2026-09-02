@@ -4,24 +4,46 @@ import {
   formatShortTime,
   formatTime,
   isAuthenticationError,
-  matchesDeviceEvent,
 } from '../lib/presentation'
 
 const gateway = useGatewayStore()
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
-const filter = ref('')
 const payloadVisible = ref(false)
 const payloadLoading = ref(false)
 const selectedEvent = ref(null)
 const selectedPayload = ref(null)
+const categories = [
+  { value: 'all', label: 'All' },
+  { value: 'event', label: 'Event' },
+  { value: 'operation', label: 'Operation' },
+  { value: 'exception', label: 'Exception' },
+  { value: 'alarm', label: 'Alarm' },
+]
+const category = ref(gateway.deviceEventQuery.category)
+const subtype = ref(gateway.deviceEventQuery.subtype)
+const terminal = ref(gateway.deviceEventQuery.terminal)
 
-const displayedEvents = computed(() =>
-  gateway.deviceEvents.filter((event) =>
-    matchesDeviceEvent(event, filter.value),
-  ),
+const selectedCategory = computed(() =>
+  categories.find((item) => item.value === category.value),
 )
+const terminalOptions = computed(() => gateway.overview.terminals)
+const currentQuery = computed(() => ({
+  category: category.value,
+  subtype: subtype.value,
+  terminal: terminal.value,
+}))
+const selectedSubtypeLabel = computed(() => {
+  const selected = gateway.deviceEventSubtypes.find(
+    (item) => item.code === subtype.value,
+  )
+  return selected ? subtypeLabel(selected) : ''
+})
+const currentViewLabel = computed(() => {
+  if (category.value === 'all') return 'All archived events'
+  return `${selectedCategory.value.label} events`
+})
 const currentPageStart = computed(() =>
   gateway.deviceEventsTotal === 0 ? 0 : gateway.deviceEventsOffset + 1,
 )
@@ -79,18 +101,46 @@ async function handleFailure(error, summary) {
 
 async function refresh() {
   try {
-    await gateway.refresh()
+    await gateway.loadDeviceEvents(0, currentQuery.value)
   } catch (error) {
-    await handleFailure(error, 'Gateway request failed')
+    await handleFailure(error, 'Could not reload device events')
   }
 }
 
 async function changePage(event) {
   try {
-    await gateway.loadDeviceEvents(event.first)
+    await gateway.loadDeviceEvents(event.first, currentQuery.value)
   } catch (error) {
     await handleFailure(error, 'Could not load device events')
   }
+}
+
+async function selectCategory(value) {
+  if (value === category.value) return
+  category.value = value
+  subtype.value = null
+  await refresh()
+}
+
+async function selectSubtype(value) {
+  if (value === subtype.value) return
+  subtype.value = value
+  await refresh()
+}
+
+async function selectTerminal() {
+  await refresh()
+}
+
+function categoryLabel(accessEvent) {
+  const category = categories.find(
+    (item) => item.value === accessEvent.category,
+  )
+  return category ? category.label : `Major type ${accessEvent.majorEventType}`
+}
+
+function subtypeLabel(value) {
+  return value.label ? `${value.code} · ${value.label}` : `Code ${value.code}`
 }
 
 async function inspectPayload(event) {
@@ -152,41 +202,100 @@ async function copyReadablePayload() {
 </script>
 
 <template>
-  <div
-    class="mb-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:justify-end"
-  >
-    <span class="relative"
-      ><i
-        class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" /><InputText
-        v-model="filter"
-        class="w-full !pl-9 sm:w-72"
-        placeholder="Filter event ID, terminal, or format" /></span
-    ><Button
-      label="Reload archive"
-      icon="pi pi-refresh"
-      :loading="gateway.refreshing"
-      @click="refresh"
-    />
-  </div>
-
   <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">
+    <div class="border-b border-slate-200 bg-slate-50 px-4 pt-3 sm:px-5">
+      <div class="flex flex-wrap items-center gap-1" role="tablist">
+        <Button
+          v-for="item in categories"
+          :key="item.value"
+          :label="item.label"
+          size="small"
+          :text="category !== item.value"
+          :severity="category === item.value ? 'info' : 'secondary'"
+          :aria-selected="category === item.value"
+          role="tab"
+          @click="selectCategory(item.value)"
+        />
+      </div>
+      <div
+        class="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <span
+            v-if="category !== 'all'"
+            class="text-xs font-medium uppercase tracking-wide text-slate-500"
+            >Sub type</span
+          >
+          <div
+            v-if="category !== 'all'"
+            class="flex max-w-full flex-wrap items-center gap-1"
+            role="group"
+            aria-label="Access-event subtype"
+          >
+            <Button
+              label="All"
+              size="small"
+              :outlined="subtype !== null"
+              :severity="subtype === null ? 'info' : 'secondary'"
+              @click="selectSubtype(null)"
+            />
+            <Button
+              v-for="item in gateway.deviceEventSubtypes"
+              :key="item.code"
+              :label="subtypeLabel(item)"
+              size="small"
+              :outlined="subtype !== item.code"
+              :severity="subtype === item.code ? 'info' : 'secondary'"
+              @click="selectSubtype(item.code)"
+            />
+          </div>
+          <span v-else class="text-sm text-slate-500"
+            >All source formats and classification states</span
+          >
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="sr-only" for="event-terminal">Terminal</label>
+          <select
+            id="event-terminal"
+            v-model="terminal"
+            class="h-9 min-w-48 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+            @change="selectTerminal"
+          >
+            <option value="">All terminals</option>
+            <option
+              v-for="item in terminalOptions"
+              :key="item.serialNumber"
+              :value="item.serialNumber"
+            >
+              {{ item.serialNumber }}
+            </option>
+          </select>
+          <Button
+            label="Reload archive"
+            icon="pi pi-refresh"
+            size="small"
+            :loading="gateway.eventsLoading"
+            @click="refresh"
+          />
+        </div>
+      </div>
+    </div>
     <div
-      class="flex flex-col gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between"
+      class="flex flex-col gap-1 border-b border-slate-200 px-4 py-3 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between"
     >
       <span
-        >Archive rows {{ currentPageStart }}–{{ currentPageEnd }} of
-        {{ gateway.deviceEventsTotal }}</span
-      >
-      <span v-if="filter" class="text-cyan-700"
-        >{{ displayedEvents.length }} matching event{{
-          displayedEvents.length === 1 ? '' : 's'
+        >{{ currentViewLabel }} · rows {{ currentPageStart }}–{{
+          currentPageEnd
         }}
-        on this page</span
+        of {{ gateway.deviceEventsTotal }}</span
       >
+      <span v-if="selectedSubtypeLabel" class="text-cyan-700">{{
+        selectedSubtypeLabel
+      }}</span>
     </div>
     <DataTable
-      v-if="displayedEvents.length"
-      :value="displayedEvents"
+      v-if="gateway.deviceEvents.length"
+      :value="gateway.deviceEvents"
       size="small"
       striped-rows
       scrollable
@@ -205,36 +314,122 @@ async function copyReadablePayload() {
           </div>
         </template>
       </Column>
-      <Column field="vendorEventId" header="Vendor event ID">
+      <Column header="Access event">
         <template #body="{ data }">
-          <code class="font-mono text-xs text-slate-700">{{
-            data.vendorEventId
-          }}</code>
-        </template>
-      </Column>
-      <Column field="terminalSerialNumber" header="Terminal" />
-      <Column header="Data format">
-        <template #body="{ data }"
-          ><Tag :value="data.dataFormat" severity="info" rounded
-        /></template>
-      </Column>
-      <Column header="Payload">
-        <template #body="{ data }">
+          <template v-if="data.accessEvent">
+            <div class="flex items-center gap-2">
+              <Tag
+                :value="categoryLabel(data.accessEvent)"
+                severity="info"
+                rounded
+              />
+              <code class="text-xs text-slate-500"
+                >{{ data.accessEvent.majorEventType }}/{{
+                  data.accessEvent.subEventType
+                }}</code
+              >
+            </div>
+            <p
+              v-if="data.accessEvent.eventDescription !== null"
+              class="mt-1 max-w-64 truncate text-slate-700"
+              :title="data.accessEvent.eventDescription"
+            >
+              {{ data.accessEvent.eventDescription }}
+            </p>
+          </template>
           <Tag
-            :value="data.payloadAvailable ? 'Captured' : 'Unavailable'"
-            :severity="data.payloadAvailable ? 'success' : 'secondary'"
+            v-else
+            value="Unclassified raw event"
+            severity="secondary"
             rounded
           />
         </template>
       </Column>
-      <Column header="">
+      <Column header="Occurred">
         <template #body="{ data }">
-          <Button
-            label="Inspect"
-            icon="pi pi-code"
-            text
-            @click="inspectPayload(data)"
+          <span v-if="data.accessEvent?.occurredAt">{{
+            formatTime(data.accessEvent.occurredAt)
+          }}</span>
+          <span v-else class="text-slate-400">—</span>
+        </template>
+      </Column>
+      <Column header="Identity">
+        <template #body="{ data }">
+          <template v-if="data.accessEvent">
+            <p
+              v-if="data.accessEvent.employeeName"
+              class="font-medium text-slate-700"
+            >
+              {{ data.accessEvent.employeeName }}
+            </p>
+            <p
+              v-if="data.accessEvent.employeeNumber"
+              class="text-xs text-slate-500"
+            >
+              Employee {{ data.accessEvent.employeeNumber }}
+            </p>
+            <p
+              v-if="data.accessEvent.cardNumber"
+              class="text-xs text-slate-500"
+            >
+              Card {{ data.accessEvent.cardNumber }}
+            </p>
+            <span
+              v-if="
+                !data.accessEvent.employeeName &&
+                !data.accessEvent.employeeNumber &&
+                !data.accessEvent.cardNumber
+              "
+              class="text-slate-400"
+              >—</span
+            >
+          </template>
+          <span v-else class="text-slate-400">—</span>
+        </template>
+      </Column>
+      <Column field="terminalSerialNumber" header="Terminal" />
+      <Column header="Source record">
+        <template #body="{ data }">
+          <code
+            class="block max-w-48 truncate text-xs text-slate-700"
+            :title="data.vendorEventId"
+            >{{ data.vendorEventId }}</code
+          >
+          <Tag
+            :value="data.dataFormat"
+            severity="secondary"
+            rounded
+            class="mt-1"
           />
+        </template>
+      </Column>
+      <Column header="Device IP">
+        <template #body="{ data }">
+          <code
+            v-if="data.accessEvent?.sourceIpAddress"
+            class="text-xs text-slate-600"
+            >{{ data.accessEvent.sourceIpAddress }}</code
+          >
+          <span v-else class="text-slate-400">—</span>
+        </template>
+      </Column>
+      <Column header="Payload">
+        <template #body="{ data }">
+          <div class="flex items-center gap-1">
+            <Tag
+              :value="data.payloadAvailable ? 'Captured' : 'Not retained'"
+              :severity="data.payloadAvailable ? 'success' : 'secondary'"
+              rounded
+            />
+            <Button
+              v-if="data.payloadAvailable"
+              label="Inspect"
+              icon="pi pi-code"
+              text
+              size="small"
+              @click="inspectPayload(data)"
+            />
+          </div>
         </template>
       </Column>
     </DataTable>
@@ -245,17 +440,9 @@ async function copyReadablePayload() {
       <ProgressSpinner stroke-width="4" class="h-6 w-6" /> Loading device events
     </div>
     <div v-else class="px-4 py-12 text-center">
-      <p class="font-medium text-slate-700">
-        {{
-          filter ? 'No matching device events' : 'No device events received yet'
-        }}
-      </p>
+      <p class="font-medium text-slate-700">No events match this view.</p>
       <p class="mt-1 text-sm text-slate-500">
-        {{
-          filter
-            ? 'Clear the page filter or move to another page.'
-            : 'Archive rows appear when a configured terminal sends a valid PushSDK Event request.'
-        }}
+        Choose another category, subtype, or terminal to widen the query.
       </p>
     </div>
     <Paginator

@@ -31,7 +31,8 @@ const router = createRouter({
           component: () => import('../views/DeviceEventsView.vue'),
           meta: {
             label: 'Event archive',
-            description: 'Exact PushSDK payloads retained from terminals',
+            description:
+              'Exact PushSDK payloads with a strict, indexed AccessController event view',
           },
         },
         {
