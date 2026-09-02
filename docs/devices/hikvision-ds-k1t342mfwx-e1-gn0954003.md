@@ -19,15 +19,14 @@ passwords belong exclusively in protected runtime secret files.
 | Hardware | `V1.0.0` | `GET /ISAPI/System/deviceInfo` |
 | Production date | `2026-01-06` | `GET /ISAPI/System/deviceInfo` |
 | Ethernet MAC address | `88:DE:39:5D:B6:05` | `GET /ISAPI/System/deviceInfo` and network interface `1` |
-| Ethernet IPv4 address | `192.0.0.64` (static) | `GET /ISAPI/System/Network/interfaces`, interface `1` |
-| Wi-Fi management IPv4 address | `10.237.36.65` (DHCP) | `GET /ISAPI/System/Network/interfaces`, interface `2`; current management path |
 | Wi-Fi MAC address | `0C:CD:B4:40:62:12` | `GET /ISAPI/System/Network/interfaces`, interface `2` |
 | Local time zone | `Asia/Shanghai` (`UTC+08:00`) | `GET /ISAPI/System/time` |
 
-The gateway does not make direct LAN connections when operating the terminal.
-Its ISAPI commands are delivered by the terminal's authenticated PushSDK
-session. The management address is documentation for controlled device
-administration only; it is not a gateway command target.
+Network addresses are intentionally not retained as terminal identity. Wi-Fi
+allocation can change; the serial numbers and MAC addresses above are the
+stable operational identifiers. The gateway does not make direct LAN
+connections when operating the terminal. Its ISAPI commands are delivered by
+the terminal's authenticated PushSDK session.
 
 ## PushSDK contract and seed
 

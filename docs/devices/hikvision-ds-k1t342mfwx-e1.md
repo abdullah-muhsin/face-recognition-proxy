@@ -9,7 +9,6 @@ runtime environment and are never committed.
 | Model | `DS-K1T342MFWX-E1` | Device model |
 | Gateway terminal serial | `DS-K1T342MFWX-E120260629V044840ENGN0953967` | `terminals.serial_number`; administration API terminal selector |
 | PushSDK terminal ID | `GN0953967` | PushSDK URL segment and `terminals.pushsdk_serial` |
-| LAN IPv4 address | `10.203.216.162` | Observed device event source; reference only, never a gateway delivery target |
 | MAC address | `88:de:39:5d:b5:e1` | Observed `AccessControllerEvent.macAddress` |
 | Access-controller channel | `1` | Observed `AccessControllerEvent.channelID` |
 | Device event name | `Access Controller` | Observed `AccessControllerEvent.deviceName` |
@@ -18,6 +17,10 @@ runtime environment and are never committed.
 | Login password digest | `sha256` | Required terminal mapping value for this firmware integration |
 | Command poll interval | `5` seconds | Required terminal mapping value |
 | Error delay | `30` seconds | Required terminal mapping value |
+
+Network addresses are intentionally not retained as terminal identity. Wi-Fi
+allocation can change; the serial numbers and MAC address above are the stable
+operational identifiers.
 
 ## Declarative terminal seed
 

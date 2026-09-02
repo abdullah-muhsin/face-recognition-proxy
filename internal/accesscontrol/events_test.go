@@ -24,7 +24,7 @@ func TestExtractProjectsDeclaredAccessControllerEvent(t *testing.T) {
 }
 
 func TestExtractProjectsDeclaredBoundaryAccessControllerEvent(t *testing.T) {
-	event := `{"ipAddress":"10.203.216.162","dateTime":"2026-09-02T12:54:06+08:00","eventType":"AccessControllerEvent","eventDescription":"Access Controller Event","AccessControllerEvent":{"majorEventType":5,"subEventType":38,"employeeNoString":"1"}}`
+	event := `{"ipAddress":"192.0.2.10","dateTime":"2026-09-02T12:54:06+08:00","eventType":"AccessControllerEvent","eventDescription":"Access Controller Event","AccessControllerEvent":{"majorEventType":5,"subEventType":38,"employeeNoString":"1"}}`
 	payload := "Content-Type: multipart/form-data; boundary=MIME_boundary\r\n\r\n" +
 		"--MIME_boundary\r\n" +
 		"Content-Disposition: form-data; name=\"AccessControllerEvent\"\r\n" +
@@ -40,7 +40,7 @@ func TestExtractProjectsDeclaredBoundaryAccessControllerEvent(t *testing.T) {
 }
 
 func TestExtractProjectsBoundaryEventWithPicturePart(t *testing.T) {
-	event := `{"ipAddress":"10.203.216.162","macAddress":"88:de:39:5d:b5:e1","channelID":1,"dateTime":"2026-09-02T13:32:56+08:00","activePostCount":1,"eventType":"AccessControllerEvent","eventState":"active","eventDescription":"Access Controller Event","shortSerialNumber":"GN0953967","AccessControllerEvent":{"deviceName":"Access Controller","majorEventType":5,"subEventType":75,"name":"test1","cardReaderNo":1,"doorNo":1,"employeeNoString":"2","serialNo":179,"frontSerialNo":178,"userType":"normal","currentVerifyMode":"faceOrFpOrCardOrPw","currentEvent":true,"mask":"no","picturesNumber":1,"purePwdVerifyEnable":true,"FaceRect":{"height":0.322,"width":0.183,"x":0.471,"y":0.492}}}`
+	event := `{"ipAddress":"192.0.2.10","macAddress":"88:de:39:5d:b5:e1","channelID":1,"dateTime":"2026-09-02T13:32:56+08:00","activePostCount":1,"eventType":"AccessControllerEvent","eventState":"active","eventDescription":"Access Controller Event","shortSerialNumber":"GN0953967","AccessControllerEvent":{"deviceName":"Access Controller","majorEventType":5,"subEventType":75,"name":"test1","cardReaderNo":1,"doorNo":1,"employeeNoString":"2","serialNo":179,"frontSerialNo":178,"userType":"normal","currentVerifyMode":"faceOrFpOrCardOrPw","currentEvent":true,"mask":"no","picturesNumber":1,"purePwdVerifyEnable":true,"FaceRect":{"height":0.322,"width":0.183,"x":0.471,"y":0.492}}}`
 	payload := "Content-Type: multipart/form-data; boundary=MIME_boundary\r\n\r\n" +
 		"--MIME_boundary\r\n" +
 		"Content-Disposition: form-data; name=\"AccessControllerEvent\"\r\n" +

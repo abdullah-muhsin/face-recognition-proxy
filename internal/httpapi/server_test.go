@@ -105,7 +105,7 @@ func TestParseISAPICommandInputAllowsEveryVendorMethodAndRequestFormat(t *testin
 func TestParseISAPICommandInputRejectsAmbiguity(t *testing.T) {
 	for _, body := range []string{
 		`{"method":"get","url":"/ISAPI/System/deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
-		`{"method":"GET","url":"https://10.203.216.162/ISAPI/System/deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
+		`{"method":"GET","url":"https://example.invalid/ISAPI/System/deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
 		`{"method":"GET","url":"/ISAPI/System/../deviceInfo","dataFormat":"noData","expiresInSeconds":60}`,
 		`{"method":"GET","url":"/ISAPI/System/deviceInfo","dataFormat":"noData","textData":"{}","expiresInSeconds":60}`,
 		`{"method":"PUT","url":"/ISAPI/System/deviceInfo","dataFormat":"boundaryData","dataBase64":"eA==\n","expiresInSeconds":60}`,
