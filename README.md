@@ -82,6 +82,10 @@ This gateway intentionally accepts only the documented protocol forms:
 - The source `eventList.data` base64 string is persisted verbatim for every
   valid item. Its inner JSON, XML, multipart, or binary body is not parsed,
   labelled, reconstructed, or filtered by the gateway.
+- Device Events decodes that retained source only in the signed-in operator
+  browser: valid UTF-8 is rendered verbatim, while non-text bytes are shown as
+  `\xHH`. The UI never displays the vendor's base64 transport value, omits no
+  bytes from its readable representation, and offers an exact-byte download.
 
 ## Local run
 

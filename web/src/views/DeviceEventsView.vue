@@ -16,7 +16,6 @@ const payloadVisible = ref(false)
 const payloadLoading = ref(false)
 const selectedEvent = ref(null)
 const selectedPayload = ref(null)
-const payloadView = ref('source')
 
 const displayedEvents = computed(() =>
   gateway.deviceEvents.filter((event) =>
@@ -33,25 +32,42 @@ const currentPageEnd = computed(() =>
   ),
 )
 const payloadCaptured = computed(
-  () => selectedPayload.value?.payloadBase64 !== null,
+  () => typeof selectedPayload.value?.payloadBase64 === 'string',
 )
-const decodedPayloadText = computed(() => {
+const payloadBytes = computed(() => {
   if (!payloadCaptured.value) return null
   try {
     const binary = window.atob(selectedPayload.value.payloadBase64)
-    const bytes = Uint8Array.from(binary, (character) =>
-      character.charCodeAt(0),
-    )
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0))
   } catch {
     return null
   }
 })
-const canRenderPayloadText = computed(
-  () =>
-    ['jsonData', 'xmlData'].includes(selectedPayload.value?.dataFormat) &&
-    decodedPayloadText.value !== null,
-)
+const decodedPayloadText = computed(() => {
+  if (!payloadBytes.value) return null
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(payloadBytes.value)
+  } catch {
+    return null
+  }
+})
+const payloadIsUtf8 = computed(() => decodedPayloadText.value !== null)
+const readablePayloadText = computed(() => {
+  if (!payloadBytes.value) return null
+  return decodedPayloadText.value ?? escapedByteView(payloadBytes.value)
+})
+
+function escapedByteView(bytes) {
+  let value = ''
+  for (const byte of bytes) {
+    if (byte === 0x0a || byte === 0x09 || (byte >= 0x20 && byte <= 0x7e)) {
+      value += String.fromCharCode(byte)
+      continue
+    }
+    value += `\\x${byte.toString(16).padStart(2, '0').toUpperCase()}`
+  }
+  return value
+}
 
 async function handleFailure(error, summary) {
   if (isAuthenticationError(error)) {
@@ -80,16 +96,10 @@ async function changePage(event) {
 async function inspectPayload(event) {
   selectedEvent.value = event
   selectedPayload.value = null
-  payloadView.value = 'source'
   payloadVisible.value = true
   payloadLoading.value = true
   try {
     selectedPayload.value = await gateway.loadDeviceEventPayload(event.id)
-    if (
-      ['jsonData', 'xmlData'].includes(selectedPayload.value.dataFormat) &&
-      selectedPayload.value.payloadBase64 !== null
-    )
-      payloadView.value = 'decoded'
   } catch (error) {
     await handleFailure(error, 'Could not load raw payload')
     payloadVisible.value = false
@@ -108,10 +118,10 @@ function payloadExtension(dataFormat) {
 }
 
 function downloadPayload() {
-  if (!selectedPayload.value || !payloadCaptured.value) return
-  const binary = window.atob(selectedPayload.value.payloadBase64)
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-  const blob = new Blob([bytes], { type: 'application/octet-stream' })
+  if (!selectedPayload.value || !payloadBytes.value) return
+  const blob = new Blob([payloadBytes.value], {
+    type: 'application/octet-stream',
+  })
   const link = document.createElement('a')
   const objectURL = URL.createObjectURL(blob)
   link.href = objectURL
@@ -120,14 +130,14 @@ function downloadPayload() {
   URL.revokeObjectURL(objectURL)
 }
 
-async function copySourcePayload() {
-  if (!selectedPayload.value || !payloadCaptured.value) return
+async function copyReadablePayload() {
+  if (!selectedPayload.value || readablePayloadText.value === null) return
   try {
-    await navigator.clipboard.writeText(selectedPayload.value.payloadBase64)
+    await navigator.clipboard.writeText(readablePayloadText.value)
     toast.add({
       severity: 'success',
       summary: 'Copied',
-      detail: 'Raw source payload copied.',
+      detail: 'Visible decoded payload copied.',
       life: 2500,
     })
   } catch {
@@ -322,56 +332,34 @@ async function copySourcePayload() {
         </div>
       </div>
       <Message severity="info" :closable="false">
-        This is the exact base64 value supplied in the PushSDK
-        <code>eventList.data</code> field. It is retained unchanged. For UTF-8
-        JSON/XML, the decoded view renders those exact bytes without parsing or
-        formatting; downloading always yields the exact decoded bytes.
+        The exact event bytes are shown below. Valid UTF-8 is rendered verbatim
+        without parsing or formatting. In mixed or binary payloads, non-text
+        bytes appear as <code>\xHH</code> so no bytes are hidden; downloading
+        always yields the exact source bytes.
       </Message>
       <template v-if="payloadCaptured">
-        <div v-if="canRenderPayloadText" class="mt-5 flex gap-2">
-          <Button
-            label="Decoded raw bytes"
-            :outlined="payloadView !== 'decoded'"
-            @click="payloadView = 'decoded'"
-          />
-          <Button
-            label="PushSDK source value"
-            :outlined="payloadView !== 'source'"
-            @click="payloadView = 'source'"
-          />
-        </div>
         <Textarea
-          v-if="payloadView === 'decoded' && canRenderPayloadText"
-          :model-value="decodedPayloadText"
+          :model-value="readablePayloadText"
           readonly
-          rows="16"
+          rows="20"
           class="mt-5 w-full !font-mono !text-xs"
-          aria-label="Decoded raw device-event bytes"
-        />
-        <Textarea
-          v-else
-          :model-value="selectedPayload.payloadBase64"
-          readonly
-          rows="16"
-          class="mt-5 w-full !font-mono !text-xs"
-          aria-label="Exact raw PushSDK event source value"
+          aria-label="Readable raw device-event bytes"
         />
         <Message
-          v-if="!canRenderPayloadText"
+          v-if="!payloadIsUtf8"
           severity="secondary"
           :closable="false"
           class="mt-5"
         >
-          This format is binary or not valid UTF-8. Its complete source value is
-          shown above; download the exact decoded bytes to inspect it with an
-          appropriate tool.
+          Non-text bytes are represented as <code>\xHH</code> in the view.
+          Download the source when a byte-exact file is required.
         </Message>
         <div class="mt-5 flex flex-wrap justify-end gap-3">
           <Button
-            label="Copy source value"
+            label="Copy visible payload"
             icon="pi pi-copy"
             outlined
-            @click="copySourcePayload"
+            @click="copyReadablePayload"
           />
           <Button
             label="Download decoded bytes"
