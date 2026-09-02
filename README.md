@@ -145,11 +145,18 @@ must explicitly choose an expiry from 1 to 3600 seconds. The terminal must be
 online when the command is queued; otherwise the endpoint returns `409` and
 does not retain the request.
 
+The gateway deliberately has no ISAPI endpoint catalog and does not impose a
+method-to-payload pairing: every combination of those vendor-supported methods
+and request formats is transported exactly as supplied. The selected terminal
+model's ISAPI documentation remains the authority for a route's semantics and
+required payload format.
+
 `GET /api/v1/admin/isapi-commands` lists the durable command audit history and
 `GET /api/v1/admin/isapi-commands/{uuid}` returns its exact request bytes and
-the terminal's exact declared response Base64 value. All three endpoints use
-the existing signed-in administrator session, so no terminal credential or
-separate device-facing authorization is exposed to the caller.
+the terminal's exact response Base64 value together with whether it declared a
+response format. All three endpoints use the existing signed-in administrator
+session, so no terminal credential or separate device-facing authorization is
+exposed to the caller.
 
 ## Local run
 

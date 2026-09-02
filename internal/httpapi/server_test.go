@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,6 +65,40 @@ func TestParseISAPICommandInputRepresentsNoDataAsZeroBytes(t *testing.T) {
 	}
 	if parsed.Data == nil || len(parsed.Data) != 0 {
 		t.Fatalf("noData bytes = %#v, want an explicit empty byte slice", parsed.Data)
+	}
+}
+
+func TestParseISAPICommandInputAllowsEveryVendorMethodAndRequestFormat(t *testing.T) {
+	formats := []struct {
+		name       string
+		dataFormat string
+		field      string
+		data       []byte
+	}{
+		{name: "no data", dataFormat: "noData", data: []byte{}},
+		{name: "json", dataFormat: "jsonData", field: `,"textData":"{\"User\":true}"`, data: []byte(`{"User":true}`)},
+		{name: "xml", dataFormat: "xmlData", field: `,"textData":"<User/>"`, data: []byte("<User/>")},
+		{name: "boundary", dataFormat: "boundaryData", field: `,"dataBase64":"AAE="`, data: []byte{0x00, 0x01}},
+	}
+	for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
+		for _, format := range formats {
+			t.Run(method+"/"+format.name, func(t *testing.T) {
+				body := fmt.Sprintf(`{"method":%q,"url":"/ISAPI/AccessControl/UserInfo/Record?format=json","dataFormat":%q%s,"expiresInSeconds":60}`,
+					method, format.dataFormat, format.field)
+				request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+				request.Header.Set("Content-Type", "application/json")
+				parsed, err := parseISAPICommandInput(request)
+				if err != nil {
+					t.Fatalf("parseISAPICommandInput() error = %v", err)
+				}
+				if parsed.Method != method || parsed.DataFormat != format.dataFormat {
+					t.Fatalf("parsed metadata = %#v", parsed)
+				}
+				if !bytes.Equal(parsed.Data, format.data) {
+					t.Fatalf("payload bytes = %v, want %v", parsed.Data, format.data)
+				}
+			})
+		}
 	}
 }
 

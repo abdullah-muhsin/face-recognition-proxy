@@ -183,7 +183,8 @@ async function changePage(event) {
         <p class="text-sm font-semibold text-slate-950">Command request</p>
         <p class="mt-0.5 text-xs text-slate-500">
           The exact request is queued for the selected terminal’s next PushSDK
-          command poll. It is never sent through a direct-device fallback.
+          command poll. Every vendor-supported ISAPI route is accepted; this is
+          not a direct-device fallback or a local command allowlist.
         </p>
       </div>
       <form class="space-y-4 p-4 sm:p-5" @submit.prevent="submit">

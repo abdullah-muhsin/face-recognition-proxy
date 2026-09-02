@@ -1,12 +1,14 @@
 package pushsdk
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/itplus/pushsdk-gateway/internal/config"
+	"github.com/itplus/pushsdk-gateway/internal/store"
 )
 
 func TestAuthInfoEncryptionModesAreDistinct(t *testing.T) {
@@ -140,6 +142,48 @@ func TestParseCommandResultBatchPreservesDeclaredFormatAndBase64(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].UUID != uuid || results[0].DataFormat == nil || *results[0].DataFormat != "jsonData" || results[0].DataBase64 != "eyJvayI6dHJ1ZX0=" {
 		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestCommandRequestItemForPreservesEveryVendorMethodAndRequestFormat(t *testing.T) {
+	for _, delivery := range []store.ISAPICommandDelivery{
+		{UUID: "00000000-0000-4000-8000-000000000001", Method: "GET", URL: "/ISAPI/System/deviceInfo", DataFormat: "noData", Data: []byte{}},
+		{UUID: "00000000-0000-4000-8000-000000000002", Method: "POST", URL: "/ISAPI/AccessControl/UserInfo/Record?format=json", DataFormat: "jsonData", Data: []byte(`{"User":true}`)},
+		{UUID: "00000000-0000-4000-8000-000000000003", Method: "PUT", URL: "/ISAPI/AccessControl/remoteCheck?format=json", DataFormat: "xmlData", Data: []byte("<RemoteCheck/>")},
+		{UUID: "00000000-0000-4000-8000-000000000004", Method: "DELETE", URL: "/ISAPI/AccessControl/UserInfo/Record?format=json", DataFormat: "boundaryData", Data: []byte{0x00, 0x01}},
+	} {
+		t.Run(delivery.Method+"/"+delivery.DataFormat, func(t *testing.T) {
+			item := commandRequestItemFor(delivery)
+			if item.UUID != delivery.UUID || item.URL != delivery.Method+" "+delivery.URL || item.DataFormat != delivery.DataFormat {
+				t.Fatalf("wire item = %#v", item)
+			}
+			if want := base64.StdEncoding.EncodeToString(delivery.Data); item.Data != want {
+				t.Fatalf("wire data = %q, want %q", item.Data, want)
+			}
+		})
+	}
+}
+
+func TestParseCommandResultBatchPreservesEveryDeclaredResponseFormat(t *testing.T) {
+	for _, test := range []struct {
+		format string
+		data   string
+	}{
+		{format: "jsonData", data: "eyJvayI6dHJ1ZX0="},
+		{format: "xmlData", data: "PFJlc3BvbnNlLz4="},
+		{format: "boundaryData", data: "AAE="},
+	} {
+		t.Run(test.format, func(t *testing.T) {
+			const uuid = "1a2b3c4d-5e6f-4789-8abc-def012345678"
+			body := []byte(`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":"` + test.format + `","data":"` + test.data + `"}]}`)
+			results, err := ParseCommandResultBatch(body)
+			if err != nil {
+				t.Fatalf("ParseCommandResultBatch() error = %v", err)
+			}
+			if len(results) != 1 || results[0].DataFormat == nil || *results[0].DataFormat != test.format || results[0].DataBase64 != test.data {
+				t.Fatalf("results = %#v", results)
+			}
+		})
 	}
 }
 
