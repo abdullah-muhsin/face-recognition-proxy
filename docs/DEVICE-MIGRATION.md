@@ -40,18 +40,17 @@ online registration before continuing.
    move and no rejected-event counter increases.
 7. Test a terminal logout/reconnect and a gateway restart. The console must show
    offline after restart until the terminal performs `AuthInfo` and `Login`
-   again. Device Events and Gateway Activity must still show the records from
-   before the restart.
+   again automatically. Device Events and Gateway Activity must still show the
+   records from before the restart.
 
 ## Gateway restart recovery
 
 PushSDK challenges are intentionally in-memory and cannot be reconstructed
-after a gateway restart. If a terminal continues sending requests from its old
-session instead of starting `AuthInfo`, an operator must disable and then
-enable PushSDK once in that terminal's own configuration. This preserves the
-configured hostname, ports, and credentials while initiating a new documented
-registration sequence. The gateway must not persist, replay, or guess an old
-challenge, and it must not alter terminal configuration automatically.
+after a gateway restart. A request that belongs to the expired session receives
+the documented `401` invalid-session envelope (`0x0020000f`, `Invalid
+SessionID.`) without a next challenge. The device then performs `AuthInfo` and
+`Login` itself; the gateway never persists, replays, or guesses a challenge and
+never alters terminal configuration automatically.
 
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a

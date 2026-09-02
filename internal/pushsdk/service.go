@@ -87,18 +87,18 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		err = &ProtocolError{Status: http.StatusNotFound, Message: "unsupported PushSDK action"}
 	}
 	if err != nil {
-		status, message := protocolError(err)
+		status, code, message := protocolError(err)
 		s.metrics.Requests.WithLabelValues(action, "rejected").Inc()
 		s.logger.Warn("pushsdk request rejected", "terminal", terminal.SerialNumber, "action", action, "status", status, "error", message)
 		if recordErr := s.recordGatewayActivity(request.Context(), activity.Event{
 			Kind:     activity.KindPushSDKRejected,
 			Terminal: terminal.SerialNumber,
 			Message:  message,
-			Fields:   map[string]any{"action": action, "status": status},
+			Fields:   map[string]any{"action": action, "status": status, "code": code},
 		}); recordErr != nil {
 			s.logger.Error("record rejected PushSDK request", "terminal", terminal.SerialNumber, "action", action, "error", recordErr)
 		}
-		s.respondError(writer, status, message)
+		s.respondErrorWithCode(writer, status, code, message)
 		return
 	}
 	s.metrics.Requests.WithLabelValues(action, "accepted").Inc()
@@ -240,13 +240,13 @@ type loginResponseData struct {
 func (s *Service) login(ctx context.Context, terminal config.Terminal, request *http.Request, requestBody []byte) (protocolResponse, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
-		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login requires AuthInfo"}
+		return protocolResponse{}, nil, invalidSession()
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if session.LoginChallengeExpired(time.Now().UTC()) {
 		s.sessions.Remove(terminal.PushSDKSerial)
-		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "AuthInfo challenge has expired"}
+		return protocolResponse{}, nil, invalidSession()
 	}
 	body, params, err := payloadForSession(request, terminal, session, "Login", requestBody, true)
 	if err != nil {
@@ -308,15 +308,15 @@ type eventResponseItem struct {
 func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, action string, request *http.Request, requestBody []byte) (protocolResponse, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
-		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
+		return protocolResponse{}, nil, invalidSession()
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if !session.Authenticated {
-		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: action + " requires Login"}
+		return protocolResponse{}, nil, invalidSession()
 	}
 	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.NextChallenge)) {
-		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "request authentication header is invalid"}
+		return protocolResponse{}, nil, invalidSession()
 	}
 	requiresBody := action == "CommandResult" || action == "Event"
 	body, params, err := payloadForSession(request, terminal, session, action, requestBody, requiresBody)
@@ -517,17 +517,25 @@ func (s *Service) respond(writer http.ResponseWriter, terminal config.Terminal, 
 }
 
 func (s *Service) respondError(writer http.ResponseWriter, status int, message string) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(status)
-	_ = json.NewEncoder(writer).Encode(successResponse{Status: status, Code: "0xFFFFFFFF", ErrorMsg: message})
+	s.respondErrorWithCode(writer, status, "0xFFFFFFFF", message)
 }
 
-func protocolError(err error) (int, string) {
+func (s *Service) respondErrorWithCode(writer http.ResponseWriter, status int, code, message string) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	_ = json.NewEncoder(writer).Encode(successResponse{Status: status, Code: code, ErrorMsg: message})
+}
+
+func protocolError(err error) (int, string, string) {
 	var protocol *ProtocolError
 	if errors.As(err, &protocol) {
-		return protocol.Status, protocol.Message
+		code := protocol.Code
+		if code == "" {
+			code = "0xFFFFFFFF"
+		}
+		return protocol.Status, code, protocol.Message
 	}
-	return http.StatusInternalServerError, "internal gateway error"
+	return http.StatusInternalServerError, "0xFFFFFFFF", "internal gateway error"
 }
 
 func readAll(body io.ReadCloser) ([]byte, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 
 	"github.com/itplus/pushsdk-gateway/internal/store"
@@ -15,6 +16,7 @@ var vendorEventID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 
 type ProtocolError struct {
 	Status  int
+	Code    string
 	Message string
 }
 
@@ -26,6 +28,19 @@ func badRequest(format string, args ...any) error {
 
 func unprocessable(format string, args ...any) error {
 	return &ProtocolError{Status: 422, Message: fmt.Sprintf(format, args...)}
+}
+
+const (
+	invalidSessionCode    = "0x0020000f"
+	invalidSessionMessage = "Invalid SessionID."
+)
+
+func invalidSession() error {
+	return &ProtocolError{
+		Status:  http.StatusUnauthorized,
+		Code:    invalidSessionCode,
+		Message: invalidSessionMessage,
+	}
 }
 
 type ParsedEvent struct {

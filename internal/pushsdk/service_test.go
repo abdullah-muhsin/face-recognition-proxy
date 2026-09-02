@@ -33,6 +33,21 @@ func TestAuthInfoEncryptionModesAreDistinct(t *testing.T) {
 	}
 }
 
+func TestInvalidSessionResponseUsesVendorRecoveryEnvelope(t *testing.T) {
+	response := httptest.NewRecorder()
+	(&Service{}).respondErrorWithCode(response, http.StatusUnauthorized, invalidSessionCode, invalidSessionMessage)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	var payload successResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != invalidSessionCode || payload.ErrorMsg != invalidSessionMessage {
+		t.Fatalf("response = %#v, want invalid-session recovery envelope", payload)
+	}
+}
+
 func TestPlaintextSessionRejectsEncryptionQueryParameters(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://gateway.example/iot/DEVICE/global/0-global/model/service/operate/PUSH/Login?security=4&iv=00112233445566778899aabbccddeeff&random=0123456789abcdef", nil)
 	session := &Session{PayloadMode: PlaintextPayload}
