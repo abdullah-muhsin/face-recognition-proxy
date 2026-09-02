@@ -145,11 +145,11 @@ func TestParseCommandResultBatchPreservesDeclaredFormatAndBase64(t *testing.T) {
 
 func TestParseCommandResultBatchAcceptsDocumentedNoDataFormatOmission(t *testing.T) {
 	const uuid = "1a2b3c4d-5e6f-4789-8abc-def012345678"
-	results, err := ParseCommandResultBatch([]byte(`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","data":""}]}`))
+	results, err := ParseCommandResultBatch([]byte(`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","data":"eyJvayI6dHJ1ZX0="}]}`))
 	if err != nil {
 		t.Fatalf("ParseCommandResultBatch() error = %v", err)
 	}
-	if len(results) != 1 || results[0].UUID != uuid || results[0].DataFormat != nil || results[0].DataBase64 != "" {
+	if len(results) != 1 || results[0].UUID != uuid || results[0].DataFormat != nil || results[0].DataBase64 != "eyJvayI6dHJ1ZX0=" {
 		t.Fatalf("results = %#v", results)
 	}
 }
@@ -157,7 +157,6 @@ func TestParseCommandResultBatchAcceptsDocumentedNoDataFormatOmission(t *testing
 func TestParseCommandResultBatchRejectsMissingOrAmbiguousDataFormat(t *testing.T) {
 	const uuid = "1a2b3c4d-5e6f-4789-8abc-def012345678"
 	for _, payload := range []string{
-		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","data":"eA=="}]}`,
 		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":null,"data":""}]}`,
 		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":"noData","data":"eA=="}]}`,
 		`{"commandNum":1,"commandList":[{"UUID":"` + uuid + `","dataFormat":"jsonData","data":""}]}`,

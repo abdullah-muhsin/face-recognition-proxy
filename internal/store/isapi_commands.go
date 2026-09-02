@@ -255,7 +255,7 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 		}
 		switch status {
 		case "sent":
-			if result.DataFormat == nil && (requestDataFormat != "noData" || result.DataBase64 != "") {
+			if result.DataFormat == nil && requestDataFormat != "noData" {
 				return nil, false, fmt.Errorf("command result UUID %s omits dataFormat outside the documented noData form", result.UUID)
 			}
 			var completedAt time.Time
@@ -287,7 +287,7 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 			activities = append(activities, stored)
 		case "completed":
 			if result.DataFormat == nil {
-				if requestDataFormat != "noData" || result.DataBase64 != "" || responseFormat != nil || responseFormatDeclared == nil || *responseFormatDeclared || responseBase64 == nil || *responseBase64 != "" {
+				if requestDataFormat != "noData" || responseFormat != nil || responseFormatDeclared == nil || *responseFormatDeclared || responseBase64 == nil || *responseBase64 != result.DataBase64 {
 					return nil, false, fmt.Errorf("command result UUID %s conflicts with its completed result", result.UUID)
 				}
 				continue

@@ -41,9 +41,9 @@ type commandResultItem struct {
 }
 
 // ParseCommandResultBatch accepts exactly the documented PushSDK result
-// envelope. The vendor documents one exception: a noData result can omit
-// dataFormat. That omission is retained as such and is never inferred or
-// rewritten as a declared format.
+// envelope. The vendor documents one exception: a terminal can omit
+// dataFormat in the result of a noData command. That omission is retained as
+// such and is never inferred or rewritten as a declared format.
 func ParseCommandResultBatch(body []byte) ([]store.ISAPICommandResult, error) {
 	var envelope commandResultEnvelope
 	if err := decodeExactJSON(body, &envelope); err != nil {
@@ -77,11 +77,8 @@ func ParseCommandResultBatch(body []byte) ([]store.ISAPICommandResult, error) {
 		var dataFormat *string
 		if item.DataFormat == nil {
 			// The vendor's CommandResult model documents that a device may omit
-			// dataFormat for noData. An empty source value is the only accepted
-			// omission; Store correlates it with the sent noData command.
-			if *item.Data != "" {
-				return nil, badRequest("command result %s omits dataFormat with non-empty data", item.UUID)
-			}
+			// dataFormat for noData. Store correlates the omission with the sent
+			// noData command; its Base64 response value is retained verbatim.
 		} else {
 			if bytes.Equal(bytes.TrimSpace(item.DataFormat), []byte("null")) {
 				return nil, badRequest("command result %s dataFormat must be a string when present", item.UUID)

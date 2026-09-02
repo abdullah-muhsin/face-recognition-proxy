@@ -359,8 +359,7 @@ async function changePage(event) {
           <dd class="text-slate-600">
             The exact `CommandResult` format and Base64 value are retained under
             the same command UUID. The vendor-documented omitted format is
-            accepted only for an empty `noData` result and remains marked as
-            omitted.
+            accepted for a `noData` command and remains marked as omitted.
           </dd>
         </div>
         <div
@@ -556,8 +555,8 @@ async function changePage(event) {
               <template
                 v-if="selectedPayload.responseDataFormatDeclared === false"
               >
-                Vendor-omitted format for an empty `noData` result · exact empty
-                Base64 source retained
+                Vendor-omitted format for a `noData` command · exact Base64
+                source retained
               </template>
               <template v-else>
                 {{ selectedPayload.responseDataFormat }} · exact Base64 source
