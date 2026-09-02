@@ -12,16 +12,16 @@ import (
 
 func TestWebAppServesVueEntryForHistoryRoutes(t *testing.T) {
 	webDir := t.TempDir()
-	writeWebFile(t, webDir, "index.html", "operator console")
+	writeWebFile(t, webDir, "index.html", "administration console")
 	server := &Server{config: config.Config{WebDir: webDir}}
 
-	for _, route := range []string{"/app/", "/app/overview", "/app/events"} {
+	for _, route := range []string{"/app/", "/app/board", "/app/events"} {
 		response := httptest.NewRecorder()
 		server.webApp(response, httptest.NewRequest(http.MethodGet, route, nil))
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s status = %d, want %d", route, response.Code, http.StatusOK)
 		}
-		if body := response.Body.String(); body != "operator console" {
+		if body := response.Body.String(); body != "administration console" {
 			t.Fatalf("%s body = %q, want Vue entry document", route, body)
 		}
 	}
@@ -29,7 +29,7 @@ func TestWebAppServesVueEntryForHistoryRoutes(t *testing.T) {
 
 func TestWebAppServesAssetsAndDoesNotMaskMissingAssets(t *testing.T) {
 	webDir := t.TempDir()
-	writeWebFile(t, webDir, "index.html", "operator console")
+	writeWebFile(t, webDir, "index.html", "administration console")
 	writeWebFile(t, webDir, "assets/app.js", "console.log('gateway')")
 	server := &Server{config: config.Config{WebDir: webDir}}
 

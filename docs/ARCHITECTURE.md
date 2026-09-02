@@ -11,7 +11,7 @@ database, or the terminal received an error and may retry.
 ```text
 Hikvision terminal --TLS/443--> Nginx --loopback--> Go gateway --SQL--> PostgreSQL
                                                |
-Operator browser -----TLS/443------------------+-- /app /api /ws
+Administrator browser ---TLS/443----------------+-- /app /api /ws
 Prometheus -----------loopback-------------------- /metrics
 ```
 
@@ -27,7 +27,7 @@ denied at Nginx and additionally CIDR-checked by Go.
   generation.
 - `internal/store`: PostgreSQL migrations, terminal state, exact raw device
   event source values, gateway activity history, PushSDK session checkpoints,
-  operator users, and hashed operator sessions.
+  administrator users, and hashed administrator sessions.
 - `internal/httpapi`: session-authenticated API, static console delivery,
   origin-checked WebSocket, private metrics, and health endpoints.
 - `internal/monitor`: in-memory fan-out of activity records that have already

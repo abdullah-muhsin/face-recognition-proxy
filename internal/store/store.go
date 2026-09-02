@@ -125,42 +125,42 @@ func (s *Store) SynchronizeConfiguredTerminals(ctx context.Context, terminals []
 	return tx.Commit(ctx)
 }
 
-// ReconcileConfiguredOperator maintains the one operator account configured by
-// ADMIN_USERNAME and ADMIN_PASSWORD. The application has no multi-user
-// provisioning interface, so retaining a previous configured username would
-// create an undocumented second administrative path.
-func (s *Store) ReconcileConfiguredOperator(ctx context.Context, username, password string) error {
+// ReconcileConfiguredAdministrator maintains the one administrator account
+// configured by ADMIN_USERNAME and ADMIN_PASSWORD. The application has no
+// multi-user provisioning interface, so retaining a previous configured
+// username would create an undocumented second administrative path.
+func (s *Store) ReconcileConfiguredAdministrator(ctx context.Context, username, password string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin operator reconciliation: %w", err)
+		return fmt.Errorf("begin administrator reconciliation: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `DELETE FROM admin_users WHERE username <> $1`, username); err != nil {
-		return fmt.Errorf("remove replaced operator: %w", err)
+		return fmt.Errorf("remove replaced administrator: %w", err)
 	}
 	var currentHash string
 	err = tx.QueryRow(ctx, `SELECT password_hash FROM admin_users WHERE username = $1`, username).Scan(&currentHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if hashErr != nil {
-			return fmt.Errorf("hash operator password: %w", hashErr)
+			return fmt.Errorf("hash administrator password: %w", hashErr)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)`, username, string(hash)); err != nil {
-			return fmt.Errorf("create configured operator: %w", err)
+			return fmt.Errorf("create configured administrator: %w", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("load configured operator: %w", err)
+		return fmt.Errorf("load configured administrator: %w", err)
 	} else if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(password)) != nil {
 		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if hashErr != nil {
-			return fmt.Errorf("hash operator password: %w", hashErr)
+			return fmt.Errorf("hash administrator password: %w", hashErr)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE admin_users SET password_hash = $2, updated_at = now() WHERE username = $1`, username, string(hash)); err != nil {
-			return fmt.Errorf("update configured operator: %w", err)
+			return fmt.Errorf("update configured administrator: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit operator reconciliation: %w", err)
+		return fmt.Errorf("commit administrator reconciliation: %w", err)
 	}
 	return nil
 }
@@ -174,7 +174,7 @@ type TerminalState struct {
 }
 
 // TransitionTerminalState updates a terminal's current state and records the
-// matching operational event in one transaction. A state shown to an operator
+// matching operational event in one transaction. A state shown to an administrator
 // therefore always has a durable explanation in gateway activity history.
 func (s *Store) TransitionTerminalState(ctx context.Context, serial, status string, lastError *string, event activity.Event) (activity.Event, error) {
 	if event.Terminal != serial {

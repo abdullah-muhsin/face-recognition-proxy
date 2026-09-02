@@ -6,19 +6,30 @@ const pageSize = 25
 const monitorLimit = 100
 const monitorRefreshDelay = 350
 const monitorReconnectDelay = 3000
+const snapshotActivityKinds = new Set([
+  'device.event_persisted',
+  'pushsdk.auth_info',
+  'pushsdk.login',
+  'pushsdk.logout',
+  'pushsdk.session_resumed',
+])
 
 export const useGatewayStore = defineStore('gateway', () => {
   const initialized = ref(false)
   const authenticated = ref(false)
-  const operatorName = ref('')
+  const administratorName = ref('')
   const initializing = ref(false)
   const refreshing = ref(false)
   const eventsLoading = ref(false)
+  const activityLoading = ref(false)
   const bootstrapError = ref('')
   const overview = ref({ deviceEventTotal: 0, terminals: [] })
   const deviceEvents = ref([])
   const deviceEventsTotal = ref(0)
   const deviceEventsOffset = ref(0)
+  const gatewayActivities = ref([])
+  const gatewayActivitiesTotal = ref(0)
+  const gatewayActivitiesOffset = ref(0)
   const monitor = ref([])
   const socketState = ref('disconnected')
   const lastUpdatedAt = ref(null)
@@ -26,7 +37,8 @@ export const useGatewayStore = defineStore('gateway', () => {
   let socket
   let initializationPromise
   let monitorReconnectTimer
-  let monitorRefreshTimer
+  let activityRefreshTimer
+  let snapshotRefreshTimer
 
   const onlineTerminals = computed(
     () =>
@@ -77,10 +89,28 @@ export const useGatewayStore = defineStore('gateway', () => {
     return request(`/api/v1/admin/events/${id}/payload`)
   }
 
+  async function loadGatewayActivities(offset = gatewayActivitiesOffset.value) {
+    activityLoading.value = true
+    try {
+      const page = await request(
+        `/api/v1/admin/activity?limit=${pageSize}&offset=${offset}`,
+      )
+      gatewayActivitiesOffset.value = offset
+      gatewayActivities.value = page.activities
+      gatewayActivitiesTotal.value = page.total
+    } finally {
+      activityLoading.value = false
+    }
+  }
+
   async function refresh() {
     refreshing.value = true
     try {
-      await Promise.all([loadOverview(), loadDeviceEvents()])
+      await Promise.all([
+        loadOverview(),
+        loadDeviceEvents(),
+        loadGatewayActivities(),
+      ])
       lastUpdatedAt.value = new Date()
     } finally {
       refreshing.value = false
@@ -119,7 +149,7 @@ export const useGatewayStore = defineStore('gateway', () => {
       body: JSON.stringify({ username, password }),
     })
     authenticated.value = true
-    operatorName.value = username
+    administratorName.value = username
     try {
       await refresh()
       connectMonitor()
@@ -138,13 +168,27 @@ export const useGatewayStore = defineStore('gateway', () => {
     clearSession()
   }
 
-  function scheduleMonitorRefresh() {
-    if (monitorRefreshTimer) return
-    monitorRefreshTimer = window.setTimeout(() => {
-      monitorRefreshTimer = undefined
-      refresh().catch((error) => {
-        if (isAuthenticationError(error)) clearSession()
-      })
+  function clearSessionOnAuthenticationError(error) {
+    if (isAuthenticationError(error)) clearSession()
+  }
+
+  function scheduleActivityRefresh() {
+    if (activityRefreshTimer) return
+    activityRefreshTimer = window.setTimeout(() => {
+      activityRefreshTimer = undefined
+      loadGatewayActivities().catch(clearSessionOnAuthenticationError)
+    }, monitorRefreshDelay)
+  }
+
+  function scheduleSnapshotRefresh() {
+    if (snapshotRefreshTimer) return
+    snapshotRefreshTimer = window.setTimeout(() => {
+      snapshotRefreshTimer = undefined
+      Promise.all([loadOverview(), loadDeviceEvents()])
+        .then(() => {
+          lastUpdatedAt.value = new Date()
+        })
+        .catch(clearSessionOnAuthenticationError)
     }, monitorRefreshDelay)
   }
 
@@ -191,12 +235,8 @@ export const useGatewayStore = defineStore('gateway', () => {
     connection.onmessage = (message) => {
       const event = JSON.parse(message.data)
       addMonitorEvent(event)
-      if (
-        ['device.event_persisted', 'pushsdk.login', 'pushsdk.logout'].includes(
-          event.kind,
-        )
-      )
-        scheduleMonitorRefresh()
+      scheduleActivityRefresh()
+      if (snapshotActivityKinds.has(event.kind)) scheduleSnapshotRefresh()
     }
   }
 
@@ -205,9 +245,13 @@ export const useGatewayStore = defineStore('gateway', () => {
       window.clearTimeout(monitorReconnectTimer)
       monitorReconnectTimer = undefined
     }
-    if (monitorRefreshTimer) {
-      window.clearTimeout(monitorRefreshTimer)
-      monitorRefreshTimer = undefined
+    if (activityRefreshTimer) {
+      window.clearTimeout(activityRefreshTimer)
+      activityRefreshTimer = undefined
+    }
+    if (snapshotRefreshTimer) {
+      window.clearTimeout(snapshotRefreshTimer)
+      snapshotRefreshTimer = undefined
     }
     if (socket) {
       const connection = socket
@@ -220,11 +264,14 @@ export const useGatewayStore = defineStore('gateway', () => {
   function clearSession() {
     disconnectMonitor()
     authenticated.value = false
-    operatorName.value = ''
+    administratorName.value = ''
     overview.value = { deviceEventTotal: 0, terminals: [] }
     deviceEvents.value = []
     deviceEventsTotal.value = 0
     deviceEventsOffset.value = 0
+    gatewayActivities.value = []
+    gatewayActivitiesTotal.value = 0
+    gatewayActivitiesOffset.value = 0
     monitor.value = []
     lastUpdatedAt.value = null
   }
@@ -237,15 +284,19 @@ export const useGatewayStore = defineStore('gateway', () => {
     pageSize,
     initialized,
     authenticated,
-    operatorName,
+    administratorName,
     initializing,
     refreshing,
     eventsLoading,
+    activityLoading,
     bootstrapError,
     overview,
     deviceEvents,
     deviceEventsTotal,
     deviceEventsOffset,
+    gatewayActivities,
+    gatewayActivitiesTotal,
+    gatewayActivitiesOffset,
     monitor,
     socketState,
     lastUpdatedAt,
@@ -258,6 +309,7 @@ export const useGatewayStore = defineStore('gateway', () => {
     refresh,
     loadDeviceEvents,
     loadDeviceEventPayload,
+    loadGatewayActivities,
     connectMonitor,
     dispose,
   }

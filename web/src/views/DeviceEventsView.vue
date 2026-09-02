@@ -153,16 +153,20 @@ async function copyReadablePayload() {
 
 <template>
   <div
-    class="mb-7 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"
+    class="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"
   >
     <div>
-      <p class="text-sm font-medium text-cyan-700">PushSDK event stream</p>
-      <h1 class="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
-        Device events
+      <p
+        class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
+      >
+        Durable source collection
+      </p>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
+        Event archive
       </h1>
-      <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-        Every structurally valid event item received from a terminal. The
-        gateway does not classify, transform, or omit its payload.
+      <p class="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+        Every structurally valid PushSDK event item retained by the gateway.
+        Payloads are available without event classification or transformation.
       </p>
     </div>
     <div class="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
@@ -171,9 +175,9 @@ async function copyReadablePayload() {
           class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" /><InputText
           v-model="filter"
           class="w-full !pl-9 sm:w-72"
-          placeholder="Filter event ID or terminal" /></span
+          placeholder="Filter event ID, terminal, or format" /></span
       ><Button
-        label="Refresh"
+        label="Reload archive"
         icon="pi pi-refresh"
         :loading="gateway.refreshing"
         @click="refresh"
@@ -181,112 +185,104 @@ async function copyReadablePayload() {
     </div>
   </div>
 
-  <Card class="border border-slate-200 shadow-sm">
-    <template #content>
-      <div
-        class="mb-5 flex flex-col gap-2 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between"
+  <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">
+    <div
+      class="flex flex-col gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <span
+        >Archive rows {{ currentPageStart }}–{{ currentPageEnd }} of
+        {{ gateway.deviceEventsTotal }}</span
       >
-        <span
-          >Showing {{ currentPageStart }}–{{ currentPageEnd }} of
-          {{ gateway.deviceEventsTotal }}</span
-        >
-        <span v-if="filter" class="text-cyan-700"
-          >{{ displayedEvents.length }} matching event{{
-            displayedEvents.length === 1 ? '' : 's'
-          }}
-          on this page</span
-        >
-      </div>
-      <DataTable
-        v-if="displayedEvents.length"
-        :value="displayedEvents"
-        striped-rows
-        scrollable
-        scroll-height="flex"
-        class="text-sm"
+      <span v-if="filter" class="text-cyan-700"
+        >{{ displayedEvents.length }} matching event{{
+          displayedEvents.length === 1 ? '' : 's'
+        }}
+        on this page</span
       >
-        <Column header="Received">
-          <template #body="{ data }">
-            <div>
-              <p class="font-medium text-slate-800">
-                {{ formatTime(data.receivedAt) }}
-              </p>
-              <p class="mt-1 text-xs text-slate-400">
-                {{ formatShortTime(data.receivedAt) }}
-              </p>
-            </div>
-          </template>
-        </Column>
-        <Column field="vendorEventId" header="Vendor event ID">
-          <template #body="{ data }">
-            <code class="font-mono text-xs text-slate-700">{{
-              data.vendorEventId
-            }}</code>
-          </template>
-        </Column>
-        <Column field="terminalSerialNumber" header="Terminal" />
-        <Column header="Data format">
-          <template #body="{ data }"
-            ><Tag :value="data.dataFormat" severity="info" rounded
-          /></template>
-        </Column>
-        <Column header="Payload">
-          <template #body="{ data }">
-            <Tag
-              :value="data.payloadAvailable ? 'Captured' : 'Unavailable'"
-              :severity="data.payloadAvailable ? 'success' : 'secondary'"
-              rounded
-            />
-          </template>
-        </Column>
-        <Column header="">
-          <template #body="{ data }">
-            <Button
-              label="Inspect"
-              icon="pi pi-code"
-              text
-              @click="inspectPayload(data)"
-            />
-          </template>
-        </Column>
-      </DataTable>
-      <div
-        v-else-if="gateway.eventsLoading"
-        class="flex items-center justify-center gap-3 py-16 text-sm font-medium text-slate-500"
-      >
-        <ProgressSpinner stroke-width="4" class="h-6 w-6" /> Loading device
-        events
-      </div>
-      <div
-        v-else
-        class="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 py-16 text-center"
-      >
-        <i class="pi pi-code text-3xl text-slate-400" />
-        <p class="mt-4 font-medium text-slate-700">
-          {{
-            filter
-              ? 'No matching device events'
-              : 'No device events received yet'
-          }}
-        </p>
-        <p class="mt-2 text-sm text-slate-500">
-          {{
-            filter
-              ? 'Clear the page filter or move to another page.'
-              : 'The list populates when a configured terminal sends a PushSDK Event request.'
-          }}
-        </p>
-      </div>
-      <Paginator
-        v-if="gateway.deviceEventsTotal > gateway.pageSize"
-        class="mt-6"
-        :first="gateway.deviceEventsOffset"
-        :rows="gateway.pageSize"
-        :total-records="gateway.deviceEventsTotal"
-        @page="changePage"
-      />
-    </template>
-  </Card>
+    </div>
+    <DataTable
+      v-if="displayedEvents.length"
+      :value="displayedEvents"
+      size="small"
+      striped-rows
+      scrollable
+      scroll-height="flex"
+      class="text-sm"
+    >
+      <Column header="Received">
+        <template #body="{ data }">
+          <div>
+            <p class="font-medium text-slate-800">
+              {{ formatTime(data.receivedAt) }}
+            </p>
+            <p class="mt-1 text-xs text-slate-400">
+              {{ formatShortTime(data.receivedAt) }}
+            </p>
+          </div>
+        </template>
+      </Column>
+      <Column field="vendorEventId" header="Vendor event ID">
+        <template #body="{ data }">
+          <code class="font-mono text-xs text-slate-700">{{
+            data.vendorEventId
+          }}</code>
+        </template>
+      </Column>
+      <Column field="terminalSerialNumber" header="Terminal" />
+      <Column header="Data format">
+        <template #body="{ data }"
+          ><Tag :value="data.dataFormat" severity="info" rounded
+        /></template>
+      </Column>
+      <Column header="Payload">
+        <template #body="{ data }">
+          <Tag
+            :value="data.payloadAvailable ? 'Captured' : 'Unavailable'"
+            :severity="data.payloadAvailable ? 'success' : 'secondary'"
+            rounded
+          />
+        </template>
+      </Column>
+      <Column header="">
+        <template #body="{ data }">
+          <Button
+            label="Inspect"
+            icon="pi pi-code"
+            text
+            @click="inspectPayload(data)"
+          />
+        </template>
+      </Column>
+    </DataTable>
+    <div
+      v-else-if="gateway.eventsLoading"
+      class="flex items-center justify-center gap-3 px-4 py-16 text-sm text-slate-500"
+    >
+      <ProgressSpinner stroke-width="4" class="h-6 w-6" /> Loading device events
+    </div>
+    <div v-else class="px-4 py-12 text-center">
+      <p class="font-medium text-slate-700">
+        {{
+          filter ? 'No matching device events' : 'No device events received yet'
+        }}
+      </p>
+      <p class="mt-1 text-sm text-slate-500">
+        {{
+          filter
+            ? 'Clear the page filter or move to another page.'
+            : 'Archive rows appear when a configured terminal sends a valid PushSDK Event request.'
+        }}
+      </p>
+    </div>
+    <Paginator
+      v-if="gateway.deviceEventsTotal > gateway.pageSize"
+      class="border-t border-slate-200"
+      :first="gateway.deviceEventsOffset"
+      :rows="gateway.pageSize"
+      :total-records="gateway.deviceEventsTotal"
+      @page="changePage"
+    />
+  </section>
 
   <Dialog
     v-model:visible="payloadVisible"

@@ -20,13 +20,13 @@ const router = useRouter()
         This console route does not exist.
       </h1>
       <p class="mt-3 text-sm leading-6 text-slate-500">
-        Use the current Device Events route from the operator navigation.
+        Return to the gateway board from the administration navigation.
       </p>
       <Button
-        label="Go to overview"
+        label="Open gateway board"
         icon="pi pi-arrow-right"
         class="mt-7"
-        @click="router.push('/overview')"
+        @click="router.push('/board')"
       />
     </div>
   </main>

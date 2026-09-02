@@ -1,5 +1,5 @@
 // Package activity defines the safe operational metadata retained by the
-// gateway and streamed to signed-in operators. Raw device bytes belong only in
+// gateway and streamed to signed-in administrators. Raw device bytes belong only in
 // device_events and are intentionally not represented here.
 package activity
 

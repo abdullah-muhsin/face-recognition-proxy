@@ -4,7 +4,6 @@ import { useGatewayStore } from '../stores/gateway'
 const gateway = useGatewayStore()
 const router = useRouter()
 const route = useRoute()
-const toast = useToast()
 const username = ref('')
 const password = ref('')
 const submitting = ref(false)
@@ -16,16 +15,8 @@ async function signIn() {
   try {
     await gateway.signIn({ username: username.value, password: password.value })
     password.value = ''
-    toast.add({
-      severity: 'success',
-      summary: 'Signed in',
-      detail: 'The operator console is ready.',
-      life: 3000,
-    })
     const redirect =
-      typeof route.query.redirect === 'string'
-        ? route.query.redirect
-        : '/overview'
+      typeof route.query.redirect === 'string' ? route.query.redirect : '/board'
     await router.replace(redirect)
   } catch (error) {
     errorMessage.value = error.message
@@ -36,97 +27,81 @@ async function signIn() {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
-    <div
-      class="mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-200/60 lg:grid-cols-[1.1fr_0.9fr]"
+  <main class="grid min-h-screen place-items-center bg-slate-100 p-4 sm:p-6">
+    <section
+      class="grid w-full max-w-4xl overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl shadow-slate-300/40 lg:grid-cols-[0.9fr_1.1fr]"
     >
-      <section
-        class="order-2 flex flex-col justify-between bg-slate-950 p-8 text-white sm:p-12 lg:order-1"
-      >
-        <div>
-          <div class="mb-12 flex items-center gap-3">
-            <span
-              class="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-400 text-xl text-slate-950 shadow-lg shadow-cyan-400/20"
-              ><i class="pi pi-bolt"
-            /></span>
-            <div>
-              <p class="text-sm font-semibold tracking-wide text-cyan-300">
-                PushSDK gateway
-              </p>
-              <p class="text-xs text-slate-400">Operations workspace</p>
-            </div>
+      <div class="bg-slate-950 p-7 text-slate-100 sm:p-9">
+        <div class="flex items-center gap-3">
+          <span
+            class="grid h-10 w-10 place-items-center rounded-lg bg-cyan-300 text-lg text-slate-950"
+            ><i class="pi pi-shield"
+          /></span>
+          <div>
+            <p class="font-semibold">PushSDK gateway</p>
+            <p class="text-xs text-slate-400">Administration console</p>
           </div>
+        </div>
+        <div class="mt-12">
           <p
-            class="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-cyan-300"
+            class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300"
           >
-            Device operations
+            Restricted access
           </p>
-          <h1
-            class="max-w-md text-4xl font-semibold tracking-tight sm:text-5xl"
-          >
-            A clearer view of every device interaction.
+          <h1 class="mt-2 text-3xl font-semibold tracking-tight">
+            Gateway visibility and detail.
           </h1>
-          <p class="mt-6 max-w-lg text-base leading-7 text-slate-300">
-            Monitor terminal health, inspect raw device events, and follow live
-            gateway activity from one focused workspace.
+          <p class="mt-4 text-sm leading-6 text-slate-300">
+            Inspect retained device payloads, terminal state, and durable
+            gateway activity from one administration board.
           </p>
         </div>
-        <div
-          class="mt-12 grid gap-4 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3"
-        >
-          <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <i class="pi pi-shield mb-3 text-cyan-300" />
-            <p class="text-sm font-semibold">Private by design</p>
-            <p class="mt-1 text-xs leading-5 text-slate-400">
-              The live feed contains metadata only.
-            </p>
+        <dl class="mt-10 space-y-4 border-t border-white/10 pt-6 text-xs">
+          <div>
+            <dt class="font-medium text-cyan-200">Event archive</dt>
+            <dd class="mt-1 leading-5 text-slate-400">
+              Exact terminal source bytes are retained separately from activity.
+            </dd>
           </div>
-          <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <i class="pi pi-wifi mb-3 text-cyan-300" />
-            <p class="text-sm font-semibold">Live state</p>
-            <p class="mt-1 text-xs leading-5 text-slate-400">
-              Terminal connectivity is updated as events arrive.
-            </p>
+          <div>
+            <dt class="font-medium text-cyan-200">Activity archive</dt>
+            <dd class="mt-1 leading-5 text-slate-400">
+              Protocol and administrative changes are stored before streaming.
+            </dd>
           </div>
-          <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <i class="pi pi-database mb-3 text-cyan-300" />
-            <p class="text-sm font-semibold">Durable records</p>
-            <p class="mt-1 text-xs leading-5 text-slate-400">
-              Every accepted device event is retained before the terminal is
-              acknowledged.
-            </p>
-          </div>
-        </div>
-      </section>
+        </dl>
+      </div>
 
-      <section class="order-1 flex items-center p-6 sm:p-12 lg:order-2">
+      <div class="flex items-center p-7 sm:p-10">
         <div class="mx-auto w-full max-w-sm">
-          <div class="mb-8">
-            <p class="text-sm font-semibold text-cyan-700">Secure sign in</p>
-            <h2
-              class="mt-2 text-3xl font-semibold tracking-tight text-slate-950"
-            >
-              Welcome back
-            </h2>
-            <p class="mt-2 text-sm leading-6 text-slate-500">
-              Use the gateway operator credentials configured for this
-              environment.
-            </p>
-          </div>
-          <form class="space-y-5" @submit.prevent="signIn">
-            <label class="block"
-              ><span class="mb-2 block text-sm font-medium text-slate-700"
+          <p
+            class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
+          >
+            Administrator authentication
+          </p>
+          <h2 class="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            Sign in
+          </h2>
+          <p class="mt-2 text-sm text-slate-600">
+            Use the administrator credentials configured for this gateway.
+          </p>
+          <form class="mt-7 space-y-5" @submit.prevent="signIn">
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-700"
                 >Username</span
-              ><InputText
+              >
+              <InputText
                 v-model="username"
                 class="w-full"
                 autocomplete="username"
                 required
-            /></label>
-            <label class="block"
-              ><span class="mb-2 block text-sm font-medium text-slate-700"
+              />
+            </label>
+            <label class="block">
+              <span class="mb-2 block text-sm font-medium text-slate-700"
                 >Password</span
-              ><Password
+              >
+              <Password
                 v-model="password"
                 class="w-full"
                 input-class="w-full"
@@ -134,7 +109,8 @@ async function signIn() {
                 toggle-mask
                 autocomplete="current-password"
                 required
-            /></label>
+              />
+            </label>
             <Message
               v-if="errorMessage || gateway.bootstrapError"
               severity="error"
@@ -144,18 +120,14 @@ async function signIn() {
             <Button
               type="submit"
               class="w-full"
-              label="Open operator console"
+              label="Open administration console"
               icon="pi pi-arrow-right"
               icon-pos="right"
               :loading="submitting"
             />
           </form>
-          <p class="mt-8 text-center text-xs leading-5 text-slate-400">
-            Gateway access is limited to authorised operators. Sessions use a
-            same-site operator cookie.
-          </p>
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
   </main>
 </template>

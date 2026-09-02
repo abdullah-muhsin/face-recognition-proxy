@@ -8,9 +8,9 @@ Vue 3/Vite (JavaScript), Tailwind CSS, PrimeVue, WebSockets, and Prometheus.
 | Path | Consumer | Purpose |
 | --- | --- | --- |
 | `/iot/{pushSdkSerial}/global/0-global/model/service/operate/PUSH/...` | Hikvision terminal | Strict PushSDK protocol endpoint |
-| `/app/` | Operators | Vue console |
+| `/app/` | Administrators | Vue administration console |
 | `/api/v1/...` | Vue console | Same-origin authenticated administration API |
-| `/ws/v1/monitor` | Vue console | Authenticated replay and live stream of retained operational metadata |
+| `/ws/v1/monitor` | Vue administration console | Authenticated replay and live stream of retained operational metadata |
 | `/metrics` | Prometheus only | Private metric endpoint |
 | `/healthz`, `/readyz` | Infrastructure | Liveness and database readiness |
 
@@ -21,7 +21,7 @@ requests by path and upgrades the browser monitoring WebSocket only at `/ws/`.
 ## Data and security model
 
 PostgreSQL stores registered terminals, raw device-event source values,
-gateway activity, authenticated PushSDK protocol state, and hashed operator
+gateway activity, authenticated PushSDK protocol state, and hashed administrator
 sessions. Every valid PushSDK `eventList` item is deduplicated with the
 terminal serial plus its vendor UUID, so device retries are safe and do not
 create duplicate events.
@@ -35,9 +35,9 @@ Gateway activity retains only status and protocol metadata; it deliberately
 excludes encrypted protocol bodies and terminal credentials. Each activity
 record is committed to PostgreSQL before its live monitor broadcast, so monitor
 history survives a gateway restart. Raw device-event data is retained only in
-PostgreSQL and is available only to a signed-in operator through Device Events;
+PostgreSQL and is available only to a signed-in administrator through Event Archive;
 it is never broadcast through the monitor or emitted in logs. An event payload
-can contain sensitive vendor data, including binary media, so operator
+can contain sensitive vendor data, including binary media, so administrator
 credentials control access to it.
 
 The PushSDK session checkpoint contains only the negotiated payload mode,
@@ -82,7 +82,7 @@ This gateway intentionally accepts only the documented protocol forms:
 - The source `eventList.data` base64 string is persisted verbatim for every
   valid item. Its inner JSON, XML, multipart, or binary body is not parsed,
   labelled, reconstructed, or filtered by the gateway.
-- Device Events decodes that retained source only in the signed-in operator
+- Event Archive decodes that retained source only in the signed-in administrator
   browser: valid UTF-8 is rendered verbatim, while non-text bytes are shown as
   `\xHH`. The UI never displays the vendor's base64 transport value, omits no
   bytes from its readable representation, and offers an exact-byte download.
@@ -94,7 +94,7 @@ This gateway intentionally accepts only the documented protocol forms:
    password. Set `loginPasswordDigest` to the one documented algorithm used by
    that exact device firmware.
 2. Copy `deploy/production/gateway.env.example` to ignored `.env`, set
-   `POSTGRES_PASSWORD`, use a matching `DATABASE_URL`, and set unique operator
+   `POSTGRES_PASSWORD`, use a matching `DATABASE_URL`, and set unique administrator
    credentials. Copy `deploy/production/terminal.env.example` to an ignored
    file such as `.local-secrets/terminal.env` and set the terminal password. For
    local HTTP testing explicitly set `COOKIE_SECURE=false`.
@@ -107,10 +107,11 @@ because a host-loopback request reaches the container through that bridge.
 
 ## Frontend development
 
-The operator console uses Tailwind CSS for layout and PrimeVue 4 for accessible
-controls, data tables, panels, feedback, and responsive navigation. Its source
-is deliberately split into Overview, Device Events, Terminals, and Live Monitor
-workspaces; it does not render every operational concern on a single screen.
+The administration console uses Tailwind CSS for layout and PrimeVue 4 for
+accessible controls, data tables, panels, feedback, and responsive navigation.
+Its source is deliberately split into Gateway Board, Event Archive, Terminal
+Registry, and Gateway Activity views; it does not render every concern on one
+screen.
 
 Vue Router uses history-mode paths beneath `/app/`; the gateway serves the Vue
 entry document for those browser routes while continuing to return `404` for

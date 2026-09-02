@@ -63,7 +63,7 @@ type eventItem struct {
 // ParseEventBatch validates the documented PushSDK Event envelope and retains
 // every source data value verbatim. The gateway deliberately does not inspect
 // or classify the payload beneath eventList: that data belongs to the device,
-// is persisted unchanged, and is shown to operators as received.
+// is persisted unchanged, and is shown to administrators as received.
 func ParseEventBatch(terminalSerial string, body []byte) ([]ParsedEvent, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()

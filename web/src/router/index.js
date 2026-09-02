@@ -12,17 +12,17 @@ const router = createRouter({
     },
     {
       path: '/',
-      component: () => import('../layouts/OperatorLayout.vue'),
+      component: () => import('../layouts/AdminLayout.vue'),
       meta: { requiresAuth: true },
       children: [
-        { path: '', redirect: { name: 'overview' } },
+        { path: '', redirect: { name: 'board' } },
         {
-          path: 'overview',
-          name: 'overview',
-          component: () => import('../views/OverviewView.vue'),
+          path: 'board',
+          name: 'board',
+          component: () => import('../views/GatewayBoardView.vue'),
           meta: {
-            label: 'Overview',
-            description: 'Gateway posture at a glance',
+            label: 'Gateway board',
+            description: 'Administrative gateway visibility',
           },
         },
         {
@@ -30,8 +30,8 @@ const router = createRouter({
           name: 'events',
           component: () => import('../views/DeviceEventsView.vue'),
           meta: {
-            label: 'Device events',
-            description: 'Exact PushSDK event payloads received from terminals',
+            label: 'Event archive',
+            description: 'Exact PushSDK payloads retained from terminals',
           },
         },
         {
@@ -39,17 +39,17 @@ const router = createRouter({
           name: 'terminals',
           component: () => import('../views/TerminalsView.vue'),
           meta: {
-            label: 'Terminals',
-            description: 'Connected PushSDK devices',
+            label: 'Terminal registry',
+            description: 'Configured PushSDK terminal state',
           },
         },
         {
-          path: 'monitor',
-          name: 'monitor',
-          component: () => import('../views/MonitorView.vue'),
+          path: 'activity',
+          name: 'activity',
+          component: () => import('../views/GatewayActivityView.vue'),
           meta: {
-            label: 'Live monitor',
-            description: 'Metadata-only gateway activity',
+            label: 'Gateway activity',
+            description: 'Retained protocol and administration activity',
           },
         },
       ],
@@ -72,7 +72,7 @@ router.beforeEach(async (to) => {
   ) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.meta.guestOnly && gateway.authenticated) return { name: 'overview' }
+  if (to.meta.guestOnly && gateway.authenticated) return { name: 'board' }
   return true
 })
 

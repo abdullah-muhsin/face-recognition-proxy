@@ -42,107 +42,128 @@ async function refresh() {
 
 <template>
   <div
-    class="mb-7 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"
+    class="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between"
   >
     <div>
-      <p class="text-sm font-medium text-cyan-700">Terminal directory</p>
-      <h1 class="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
-        Connected devices
+      <p
+        class="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700"
+      >
+        Configured endpoint state
+      </p>
+      <h1 class="mt-1 text-2xl font-semibold tracking-tight text-slate-950">
+        Terminal registry
       </h1>
-      <p class="mt-2 text-sm text-slate-500">
-        Every terminal configured to register through this gateway.
+      <p class="mt-1 text-sm text-slate-600">
+        Canonical device identity, current connection state, and the latest
+        gateway observation for every configured PushSDK terminal.
       </p>
     </div>
-    <div class="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+    <div class="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
       <span class="relative"
         ><i
-          class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400" /><InputText
+          class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400" /><InputText
           v-model="filter"
-          class="w-full !pl-9 sm:w-72"
-          placeholder="Find a terminal" /></span
+          class="w-full !pl-8 sm:w-80"
+          placeholder="Filter serial, state, or error" /></span
       ><Button
-        label="Refresh"
+        label="Reload registry"
         icon="pi pi-refresh"
         :loading="gateway.refreshing"
         @click="refresh"
       />
     </div>
   </div>
-  <div class="mb-6 grid gap-4 sm:grid-cols-3">
-    <Card class="border border-slate-200 shadow-sm"
-      ><template #content
-        ><p class="text-sm font-medium text-slate-500">Online</p>
-        <p class="mt-3 text-3xl font-semibold tracking-tight text-emerald-700">
-          {{ gateway.onlineTerminals }}
-        </p></template
-      ></Card
-    ><Card class="border border-slate-200 shadow-sm"
-      ><template #content
-        ><p class="text-sm font-medium text-slate-500">Offline</p>
-        <p class="mt-3 text-3xl font-semibold tracking-tight text-slate-700">
-          {{ gateway.offlineTerminals }}
-        </p></template
-      ></Card
-    ><Card class="border border-slate-200 shadow-sm"
-      ><template #content
-        ><p class="text-sm font-medium text-slate-500">With last error</p>
-        <p class="mt-3 text-3xl font-semibold tracking-tight text-amber-700">
-          {{ gateway.terminalsWithErrors }}
-        </p></template
-      ></Card
+
+  <section class="overflow-hidden rounded-lg border border-slate-300 bg-white">
+    <div
+      class="grid divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0"
     >
-  </div>
-  <Card class="border border-slate-200 shadow-sm"
-    ><template #content>
-      <DataTable
-        v-if="displayedTerminals.length"
-        :value="displayedTerminals"
-        striped-rows
-        class="text-sm"
-        ><Column header="Terminal"
-          ><template #body="{ data }"
-            ><div>
-              <p class="font-medium text-slate-900">{{ data.serialNumber }}</p>
-              <p class="mt-1 text-xs text-slate-500">
-                PushSDK serial: {{ data.pushSdkSerial }}
-              </p>
-            </div></template
-          ></Column
-        ><Column header="Status"
-          ><template #body="{ data }"
-            ><Tag
-              :value="statusLabel(data.status)"
-              :severity="statusSeverity(data.status)"
-              rounded /></template></Column
-        ><Column header="Last seen"
-          ><template #body="{ data }">{{
-            formatTime(data.lastSeenAt)
-          }}</template></Column
-        ><Column header="Last error"
-          ><template #body="{ data }"
-            ><span
-              :class="data.lastError ? 'text-red-700' : 'text-slate-400'"
-              >{{ data.lastError || '—' }}</span
-            ></template
-          ></Column
-        ></DataTable
-      >
-      <div
-        v-else
-        class="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 py-16 text-center"
-      >
-        <i class="pi pi-desktop text-3xl text-slate-400" />
-        <p class="mt-4 font-medium text-slate-700">
-          {{ filter ? 'No matching terminals' : 'No terminals configured' }}
+      <div class="p-3">
+        <p class="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Online
         </p>
-        <p class="mt-2 text-sm text-slate-500">
-          {{
-            filter
-              ? 'Try another terminal serial or status.'
-              : 'Add a terminal mapping and restart the gateway to begin registration.'
-          }}
+        <p class="mt-1 text-xl font-semibold tabular-nums text-emerald-700">
+          {{ gateway.onlineTerminals }}
         </p>
       </div>
-    </template></Card
+      <div class="p-3">
+        <p class="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Offline
+        </p>
+        <p class="mt-1 text-xl font-semibold tabular-nums text-slate-800">
+          {{ gateway.offlineTerminals }}
+        </p>
+      </div>
+      <div class="p-3">
+        <p class="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Last errors
+        </p>
+        <p class="mt-1 text-xl font-semibold tabular-nums text-amber-700">
+          {{ gateway.terminalsWithErrors }}
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section
+    class="mt-5 overflow-hidden rounded-lg border border-slate-300 bg-white"
   >
+    <div class="border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <h2 class="text-sm font-semibold text-slate-950">Registered terminals</h2>
+      <p class="mt-0.5 text-xs text-slate-500">
+        State is durable and reflects the latest valid protocol interaction.
+      </p>
+    </div>
+    <DataTable
+      v-if="displayedTerminals.length"
+      :value="displayedTerminals"
+      size="small"
+      striped-rows
+      scrollable
+      class="text-sm"
+    >
+      <Column header="Terminal serial">
+        <template #body="{ data }">
+          <code class="text-xs text-slate-800">{{ data.serialNumber }}</code>
+        </template>
+      </Column>
+      <Column header="PushSDK serial">
+        <template #body="{ data }">
+          <code class="text-xs text-slate-700">{{ data.pushSdkSerial }}</code>
+        </template>
+      </Column>
+      <Column header="State">
+        <template #body="{ data }">
+          <Tag
+            :value="statusLabel(data.status)"
+            :severity="statusSeverity(data.status)"
+            rounded
+          />
+        </template>
+      </Column>
+      <Column header="Last seen">
+        <template #body="{ data }">
+          <span class="whitespace-nowrap text-xs text-slate-600">{{
+            formatTime(data.lastSeenAt)
+          }}</span>
+        </template>
+      </Column>
+      <Column header="Last error">
+        <template #body="{ data }">
+          <code
+            class="whitespace-pre-wrap text-xs"
+            :class="data.lastError ? 'text-red-700' : 'text-slate-400'"
+            >{{ data.lastError || '—' }}</code
+          >
+        </template>
+      </Column>
+    </DataTable>
+    <p v-else class="px-4 py-8 text-sm text-slate-500">
+      {{
+        filter
+          ? 'No terminal rows match this filter.'
+          : 'No terminal mappings are configured.'
+      }}
+    </p>
+  </section>
 </template>

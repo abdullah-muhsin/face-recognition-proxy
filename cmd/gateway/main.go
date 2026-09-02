@@ -46,7 +46,7 @@ func run(logger *slog.Logger) error {
 	if err := data.SynchronizeConfiguredTerminals(ctx, cfg.Terminals); err != nil {
 		return err
 	}
-	if err := data.ReconcileConfiguredOperator(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+	if err := data.ReconcileConfiguredAdministrator(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		return err
 	}
 	if err := data.PurgeExpiredSessions(ctx); err != nil {

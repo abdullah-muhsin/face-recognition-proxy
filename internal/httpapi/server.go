@@ -92,7 +92,8 @@ func (s *Server) redirectRoot(writer http.ResponseWriter, request *http.Request)
 
 // webApp serves static build assets by filename and the Vue entry document for
 // history-mode browser routes. An asset request keeps the file server's normal
-// 404 behavior; only extensionless operator-console paths resolve to index.html.
+// 404 behavior; only extensionless administration-console paths resolve to
+// index.html.
 func (s *Server) webApp(writer http.ResponseWriter, request *http.Request) {
 	relativePath := strings.TrimPrefix(request.URL.Path, "/app/")
 	if relativePath == "" || path.Ext(relativePath) == "" {
@@ -137,7 +138,7 @@ func (s *Server) login(writer http.ResponseWriter, request *http.Request) {
 		userID,
 		sum[:],
 		time.Now().UTC().Add(s.config.SessionTTL),
-		activity.Event{Kind: activity.KindAdminLogin, Message: "operator session opened"},
+		activity.Event{Kind: activity.KindAdminLogin, Message: "administrator session opened"},
 	)
 	if err != nil {
 		s.internalError(writer, "persist admin session", err)
@@ -157,7 +158,7 @@ func (s *Server) logout(writer http.ResponseWriter, request *http.Request) {
 	storedActivity, err := s.store.DeleteSessionWithActivity(
 		request.Context(),
 		sum[:],
-		activity.Event{Kind: activity.KindAdminLogout, Message: "operator session closed"},
+		activity.Event{Kind: activity.KindAdminLogout, Message: "administrator session closed"},
 	)
 	if err != nil {
 		s.internalError(writer, "delete admin session", err)

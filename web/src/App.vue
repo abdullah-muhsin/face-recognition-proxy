@@ -19,7 +19,7 @@ onBeforeUnmount(() => {
   >
     <div class="flex items-center gap-3 text-sm font-medium text-slate-600">
       <ProgressSpinner stroke-width="4" class="h-6 w-6" />
-      Preparing operator console
+      Preparing administration console
     </div>
   </main>
   <RouterView v-else />

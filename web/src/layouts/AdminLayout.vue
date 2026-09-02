@@ -1,6 +1,6 @@
 <script setup>
 import { useGatewayStore } from '../stores/gateway'
-import { isAuthenticationError } from '../lib/presentation'
+import { isAuthenticationError, monitorConnection } from '../lib/presentation'
 
 const gateway = useGatewayStore()
 const router = useRouter()
@@ -9,39 +9,20 @@ const toast = useToast()
 const mobileNavigationVisible = ref(false)
 
 const navigation = [
-  { to: '/overview', label: 'Overview', icon: 'pi pi-home' },
-  { to: '/events', label: 'Device events', icon: 'pi pi-code' },
-  { to: '/terminals', label: 'Terminals', icon: 'pi pi-desktop' },
-  { to: '/monitor', label: 'Live monitor', icon: 'pi pi-wave-pulse' },
+  { to: '/board', label: 'Gateway board', icon: 'pi pi-table' },
+  { to: '/events', label: 'Event archive', icon: 'pi pi-code' },
+  { to: '/terminals', label: 'Terminal registry', icon: 'pi pi-server' },
+  { to: '/activity', label: 'Gateway activity', icon: 'pi pi-list' },
 ]
 
 const title = computed(() => route.meta.label || 'PushSDK gateway')
 const description = computed(
-  () => route.meta.description || 'Operations workspace',
+  () => route.meta.description || 'Administrative gateway visibility',
 )
-const operatorInitials = computed(() =>
-  (gateway.operatorName || 'OP').slice(0, 2).toUpperCase(),
+const administratorInitials = computed(() =>
+  (gateway.administratorName || 'AD').slice(0, 2).toUpperCase(),
 )
-const monitorConnectionLabel = computed(
-  () =>
-    ({
-      connected: 'Live connected',
-      connecting: 'Connecting',
-      reconnecting: 'Reconnecting',
-      disconnected: 'Disconnected',
-      error: 'Connection error',
-    })[gateway.socketState] || 'Disconnected',
-)
-const monitorConnectionSeverity = computed(
-  () =>
-    ({
-      connected: 'success',
-      connecting: 'warn',
-      reconnecting: 'warn',
-      disconnected: 'secondary',
-      error: 'danger',
-    })[gateway.socketState] || 'secondary',
-)
+const connection = computed(() => monitorConnection(gateway.socketState))
 
 watch(
   () => gateway.authenticated,
@@ -85,7 +66,7 @@ async function signOut() {
     toast.add({
       severity: 'success',
       summary: 'Signed out',
-      detail: 'The operator session has ended.',
+      detail: 'The administrator session has ended.',
       life: 3000,
     })
     await router.replace({ name: 'login' })
@@ -101,25 +82,25 @@ async function signOut() {
 </script>
 
 <template>
-  <main class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="min-h-screen bg-slate-100 text-slate-900">
     <Drawer
       v-model:visible="mobileNavigationVisible"
       position="left"
       class="!w-80"
     >
-      <template #header
-        ><div class="flex items-center gap-3">
+      <template #header>
+        <div class="flex items-center gap-3">
           <span
-            class="grid h-10 w-10 place-items-center rounded-xl bg-slate-950 text-lg text-cyan-300"
-            ><i class="pi pi-bolt"
+            class="grid h-10 w-10 place-items-center rounded-lg bg-slate-950 text-lg text-cyan-300"
+            ><i class="pi pi-shield"
           /></span>
           <div>
             <p class="font-semibold text-slate-950">PushSDK gateway</p>
-            <p class="text-xs text-slate-500">Operations workspace</p>
+            <p class="text-xs text-slate-500">Administration console</p>
           </div>
-        </div></template
-      >
-      <nav class="space-y-1" aria-label="Operator console navigation">
+        </div>
+      </template>
+      <nav class="space-y-1" aria-label="Administration navigation">
         <Button
           v-for="item in navigation"
           :key="item.to"
@@ -127,7 +108,7 @@ async function signOut() {
           class="w-full !justify-start"
           :class="
             route.path === item.to
-              ? '!bg-slate-100 !text-slate-950'
+              ? '!bg-slate-200 !text-slate-950'
               : '!text-slate-600'
           "
           :icon="item.icon"
@@ -136,36 +117,26 @@ async function signOut() {
         />
       </nav>
       <Divider />
-      <div class="rounded-xl bg-slate-50 p-4">
-        <div class="mb-2 flex items-center gap-2">
-          <i class="pi pi-shield text-cyan-700" /><span
-            class="text-sm font-semibold text-slate-800"
-            >Privacy boundary</span
-          >
-        </div>
-        <p class="text-xs leading-5 text-slate-500">
-          Protocol payloads, images, and credentials are not sent to this
-          interface.
-        </p>
-      </div>
+      <p class="text-xs leading-5 text-slate-500">
+        Raw device payloads are available only in Event archive. Gateway
+        activity retains safe operational metadata only.
+      </p>
     </Drawer>
 
     <aside
-      class="fixed inset-y-0 left-0 hidden w-72 flex-col border-r border-slate-200 bg-white px-4 py-6 lg:flex"
+      class="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-slate-300 bg-slate-950 px-3 py-4 text-slate-100 lg:flex"
     >
-      <div class="mb-9 flex items-center gap-3 px-2">
+      <div class="mb-6 flex items-center gap-3 px-2">
         <span
-          class="grid h-11 w-11 place-items-center rounded-2xl bg-slate-950 text-xl text-cyan-300"
-          ><i class="pi pi-bolt"
+          class="grid h-9 w-9 place-items-center rounded-lg bg-cyan-300 text-lg text-slate-950"
+          ><i class="pi pi-shield"
         /></span>
         <div>
-          <p class="font-semibold tracking-tight text-slate-950">
-            PushSDK gateway
-          </p>
-          <p class="text-xs text-slate-500">Operations workspace</p>
+          <p class="font-semibold tracking-tight">PushSDK gateway</p>
+          <p class="text-xs text-slate-400">Administration console</p>
         </div>
       </div>
-      <nav class="space-y-1" aria-label="Operator console navigation">
+      <nav class="space-y-1" aria-label="Administration navigation">
         <Button
           v-for="item in navigation"
           :key="item.to"
@@ -173,32 +144,32 @@ async function signOut() {
           class="w-full !justify-start"
           :class="
             route.path === item.to
-              ? '!bg-slate-100 !text-slate-950'
-              : '!text-slate-600'
+              ? '!bg-white/15 !text-cyan-200'
+              : '!text-slate-300 hover:!bg-white/5 hover:!text-white'
           "
           :icon="item.icon"
           :label="item.label"
           @click="navigate(item.to)"
         />
       </nav>
-      <div class="mt-auto rounded-2xl bg-slate-950 p-5 text-slate-100">
-        <div class="mb-3 flex items-center gap-2 text-cyan-300">
-          <i class="pi pi-shield" /><span class="text-sm font-semibold"
-            >Privacy boundary</span
-          >
-        </div>
-        <p class="text-xs leading-5 text-slate-400">
-          Protocol payloads, images, and credentials remain outside this
-          interface.
+      <div class="mt-auto border-t border-white/10 px-2 pt-4">
+        <p class="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Data boundary
+        </p>
+        <p class="mt-2 text-xs leading-5 text-slate-400">
+          Payloads stay in the event archive. Credentials are never exposed in
+          this console.
         </p>
       </div>
     </aside>
 
-    <section class="lg:pl-72">
+    <section class="lg:pl-60">
       <header
-        class="sticky top-0 z-20 border-b border-slate-200 bg-slate-50/90 px-4 py-4 backdrop-blur sm:px-6 lg:px-10"
+        class="sticky top-0 z-20 border-b border-slate-300 bg-slate-100/95 px-4 py-3 backdrop-blur sm:px-6 lg:px-8"
       >
-        <div class="mx-auto flex max-w-7xl items-center justify-between gap-4">
+        <div
+          class="mx-auto flex max-w-[100rem] items-center justify-between gap-4"
+        >
           <div class="flex min-w-0 items-center gap-3">
             <Button
               icon="pi pi-bars"
@@ -217,24 +188,27 @@ async function signOut() {
               </p>
             </div>
           </div>
-          <div class="flex items-center gap-2 sm:gap-3">
+          <div class="flex items-center gap-2">
             <Tag
-              :value="monitorConnectionLabel"
-              :severity="monitorConnectionSeverity"
+              :value="connection.label"
+              :severity="connection.severity"
               rounded
               class="hidden sm:inline-flex"
-            /><Button
+            />
+            <Button
               icon="pi pi-refresh"
               text
               rounded
-              aria-label="Refresh console"
+              aria-label="Refresh administrative data"
               :loading="gateway.refreshing"
               @click="refresh"
-            /><Avatar
-              :label="operatorInitials"
+            />
+            <Avatar
+              :label="administratorInitials"
               shape="circle"
               class="!bg-slate-950 !text-xs !font-semibold !text-cyan-300"
-            /><Button
+            />
+            <Button
               label="Sign out"
               icon="pi pi-sign-out"
               text
@@ -244,7 +218,7 @@ async function signOut() {
           </div>
         </div>
       </header>
-      <section class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+      <section class="mx-auto max-w-[100rem] px-4 py-5 sm:px-6 lg:px-8">
         <RouterView />
       </section>
     </section>

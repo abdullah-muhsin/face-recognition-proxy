@@ -20,6 +20,18 @@ export function eventSeverity(kind) {
   return 'secondary'
 }
 
+const monitorConnections = {
+  connected: { label: 'Live connected', severity: 'success' },
+  connecting: { label: 'Connecting', severity: 'warn' },
+  reconnecting: { label: 'Reconnecting', severity: 'warn' },
+  disconnected: { label: 'Disconnected', severity: 'secondary' },
+  error: { label: 'Connection error', severity: 'danger' },
+}
+
+export function monitorConnection(state) {
+  return monitorConnections[state] || monitorConnections.disconnected
+}
+
 export function formatTime(value) {
   if (!value) return '—'
   const time = new Date(value)
@@ -61,6 +73,16 @@ export function matchesTerminal(terminal, query) {
     terminal.status,
     terminal.lastError,
   ]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase()
+    .includes(term)
+}
+
+export function matchesGatewayActivity(activity, query) {
+  const term = query.trim().toLocaleLowerCase()
+  if (!term) return true
+  return [activity.kind, activity.terminal, activity.message]
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase()
