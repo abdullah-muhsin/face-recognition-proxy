@@ -55,8 +55,10 @@ protected `terminals.json` inventory. It upserts each configured terminal's
 canonical serial, PushSDK ID, protocol settings, and credential fingerprint;
 it never stores the terminal password. The seed intentionally starts each
 configured terminal offline until that terminal proves an authenticated
-PushSDK session. See the [DS-K1T342MFWX-E1 terminal record](docs/devices/hikvision-ds-k1t342mfwx-e1.md)
-for the current device's identifiers and the matching non-secret seed template.
+PushSDK session. The installed inventory is documented as
+[GN0953967](docs/devices/hikvision-ds-k1t342mfwx-e1.md) and
+[GN0954003](docs/devices/hikvision-ds-k1t342mfwx-e1-gn0954003.md), each with
+its exact non-secret identifiers and seed template.
 
 ISAPI command request bytes and command-result source values can be sensitive
 as well. They are retained only in PostgreSQL's command audit and returned only

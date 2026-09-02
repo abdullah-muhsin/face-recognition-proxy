@@ -7,8 +7,8 @@ reconfigure unrelated projects.
 
 ## Prepare the protected configuration
 
-`terminals.json` contains one exact terminal mapping and only the name of its
-protected password environment variable. `serialNumber` is the
+`terminals.json` contains one exact mapping for every terminal and only the
+name of each protected password environment variable. `serialNumber` is the
 canonical device serial used in PostgreSQL; `pushSdkSerial` is the value in the
 PushSDK URL. The username and password must exactly match the values entered in
 the terminal's PushSDK screen. `securityVersion` must be either `3` or `4` and
@@ -20,9 +20,10 @@ the previous `digest` mapping key is not accepted.
 On startup the gateway runs `SeedConfiguredTerminals`, which upserts this
 mapping before the terminal can authenticate. It records only the terminal
 identity, PushSDK protocol settings, and a credential fingerprint; the password
-remains in the protected environment file. For the installed device, use the
-[DS-K1T342MFWX-E1 terminal record](devices/hikvision-ds-k1t342mfwx-e1.md) as
-the source of exact non-secret identifiers.
+remains in the protected environment file. For the installed devices, use the
+[DS-K1T342MFWX-E1 `GN0953967` terminal record](devices/hikvision-ds-k1t342mfwx-e1.md)
+and [DS-K1T342MFWX-E1 `GN0954003` terminal record](devices/hikvision-ds-k1t342mfwx-e1-gn0954003.md)
+as the sources of exact non-secret identifiers.
 
 Use HTTPS server `vps.itplus.club`, HTTPS port `443`, and WebSocket port `443`
 only after Nginx routes to the new loopback gateway. The terminal must show

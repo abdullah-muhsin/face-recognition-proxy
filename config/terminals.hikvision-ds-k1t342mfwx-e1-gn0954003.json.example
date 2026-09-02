@@ -1,0 +1,12 @@
+[
+  {
+    "serialNumber": "DS-K1T342MFWX-E120260629V044840ENGN0954003",
+    "pushSdkSerial": "GN0954003",
+    "username": "attendance_gateway",
+    "passwordEnvironmentVariable": "PUSHSDK_TERMINAL_GN0954003_PASSWORD",
+    "loginPasswordDigest": "sha256",
+    "securityVersion": 4,
+    "commandIntervalSeconds": 5,
+    "errorDelaySeconds": 30
+  }
+]
