@@ -20,12 +20,16 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/itplus/pushsdk-gateway/internal/activity"
 	"github.com/itplus/pushsdk-gateway/internal/config"
 	"github.com/itplus/pushsdk-gateway/internal/monitor"
 	"github.com/itplus/pushsdk-gateway/internal/store"
 )
 
-const sessionCookie = "pushsdk_admin_session"
+const (
+	sessionCookie       = "pushsdk_admin_session"
+	monitorHistoryLimit = 100
+)
 
 type Server struct {
 	config      config.Config
@@ -57,6 +61,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/admin/overview", s.withSession(s.overview))
 	mux.HandleFunc("GET /api/v1/admin/events", s.withSession(s.deviceEvents))
 	mux.HandleFunc("GET /api/v1/admin/events/{id}/payload", s.withSession(s.deviceEventPayload))
+	mux.HandleFunc("GET /api/v1/admin/activity", s.withSession(s.gatewayActivity))
 	mux.HandleFunc("GET /ws/v1/monitor", s.withSession(s.monitorSocket))
 	mux.HandleFunc("/", s.redirectRoot)
 	mux.HandleFunc("GET /app/", s.webApp)
@@ -127,12 +132,19 @@ func (s *Server) login(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	sum := sha256.Sum256([]byte(rawToken))
-	if err := s.store.CreateSession(request.Context(), userID, sum[:], time.Now().UTC().Add(s.config.SessionTTL)); err != nil {
+	storedActivity, err := s.store.CreateSessionWithActivity(
+		request.Context(),
+		userID,
+		sum[:],
+		time.Now().UTC().Add(s.config.SessionTTL),
+		activity.Event{Kind: activity.KindAdminLogin, Message: "operator session opened"},
+	)
+	if err != nil {
 		s.internalError(writer, "persist admin session", err)
 		return
 	}
 	http.SetCookie(writer, &http.Cookie{Name: sessionCookie, Value: rawToken, Path: "/", HttpOnly: true, Secure: s.config.CookieSecure, SameSite: http.SameSiteStrictMode, MaxAge: int(s.config.SessionTTL.Seconds())})
-	s.hub.Publish(monitor.Event{Kind: "admin.login", Message: "operator session opened"})
+	s.hub.Publish(storedActivity)
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "authenticated"})
 }
 func (s *Server) logout(writer http.ResponseWriter, request *http.Request) {
@@ -142,11 +154,17 @@ func (s *Server) logout(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	sum := sha256.Sum256([]byte(token))
-	if err := s.store.DeleteSession(request.Context(), sum[:]); err != nil {
+	storedActivity, err := s.store.DeleteSessionWithActivity(
+		request.Context(),
+		sum[:],
+		activity.Event{Kind: activity.KindAdminLogout, Message: "operator session closed"},
+	)
+	if err != nil {
 		s.internalError(writer, "delete admin session", err)
 		return
 	}
 	http.SetCookie(writer, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, Secure: s.config.CookieSecure, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	s.hub.Publish(storedActivity)
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "signed_out"})
 }
 func (s *Server) overview(writer http.ResponseWriter, request *http.Request) {
@@ -189,6 +207,20 @@ func (s *Server) deviceEventPayload(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusOK, payload)
 }
 
+func (s *Server) gatewayActivity(writer http.ResponseWriter, request *http.Request) {
+	limit, offset, err := pagination(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := s.store.GatewayActivities(request.Context(), limit, offset)
+	if err != nil {
+		s.internalError(writer, "load gateway activity", err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, page)
+}
+
 func (s *Server) withSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
 		token, err := sessionToken(request)
@@ -219,8 +251,15 @@ func (s *Server) monitorSocket(writer http.ResponseWriter, request *http.Request
 	defer connection.Close()
 	client, unsubscribe := s.hub.Subscribe()
 	defer unsubscribe()
-	if err := connection.WriteJSON(monitor.Event{At: time.Now().UTC(), Kind: "monitor.connected", Message: "live monitoring connected"}); err != nil {
+	history, err := s.store.GatewayActivities(request.Context(), monitorHistoryLimit, 0)
+	if err != nil {
+		s.logger.Error("load gateway activity for monitor", "error", err)
 		return
+	}
+	for index := len(history.Activities) - 1; index >= 0; index-- {
+		if err := connection.WriteJSON(history.Activities[index]); err != nil {
+			return
+		}
 	}
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()

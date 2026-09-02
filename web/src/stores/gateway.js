@@ -148,8 +148,16 @@ export const useGatewayStore = defineStore('gateway', () => {
     }, monitorRefreshDelay)
   }
 
+  function addMonitorEvent(event) {
+    const history = event.id
+      ? monitor.value.filter((current) => current.id !== event.id)
+      : monitor.value
+    monitor.value = [event, ...history].slice(0, monitorLimit)
+  }
+
   function connectMonitor() {
     disconnectMonitor()
+    monitor.value = []
     if (!authenticated.value) return
 
     socketState.value = 'connecting'
@@ -182,8 +190,7 @@ export const useGatewayStore = defineStore('gateway', () => {
     }
     connection.onmessage = (message) => {
       const event = JSON.parse(message.data)
-      monitor.value.unshift(event)
-      monitor.value = monitor.value.slice(0, monitorLimit)
+      addMonitorEvent(event)
       if (
         ['device.event_persisted', 'pushsdk.login', 'pushsdk.logout'].includes(
           event.kind,

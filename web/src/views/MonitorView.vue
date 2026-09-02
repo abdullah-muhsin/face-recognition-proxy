@@ -3,6 +3,7 @@ import { useGatewayStore } from '../stores/gateway'
 import { eventSeverity, formatTime } from '../lib/presentation'
 
 const gateway = useGatewayStore()
+const formatFields = (fields) => JSON.stringify(fields, null, 2)
 const monitorConnectionLabel = computed(
   () =>
     ({
@@ -30,13 +31,13 @@ const monitorConnectionSeverity = computed(
     class="mb-7 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"
   >
     <div>
-      <p class="text-sm font-medium text-cyan-700">Live monitor</p>
+      <p class="text-sm font-medium text-cyan-700">Gateway activity</p>
       <h1 class="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
         Gateway activity
       </h1>
       <p class="mt-2 text-sm text-slate-500">
-        A live, metadata-only operational feed. Protocol bodies and biometric
-        data are deliberately excluded.
+        PostgreSQL-backed operational history, with new activity streamed live.
+        Raw device payloads remain in Device Events and are never copied here.
       </p>
     </div>
     <div class="flex items-center gap-3">
@@ -73,6 +74,17 @@ const monitorConnectionSeverity = computed(
             <p class="mt-1 text-xs text-slate-500">
               Source: {{ event.terminal || 'Gateway' }}
             </p>
+            <details
+              v-if="event.fields && Object.keys(event.fields).length"
+              class="mt-3"
+            >
+              <summary class="cursor-pointer text-xs font-medium text-cyan-700">
+                Activity details
+              </summary>
+              <pre
+                class="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"
+              >{{ formatFields(event.fields) }}</pre>
+            </details>
           </div>
         </article>
       </div>
@@ -82,11 +94,11 @@ const monitorConnectionSeverity = computed(
       >
         <i class="pi pi-wave-pulse text-3xl text-slate-400" />
         <p class="mt-4 font-medium text-slate-700">
-          Waiting for gateway activity
+          No gateway activity retained yet
         </p>
         <p class="mt-2 text-sm text-slate-500">
-          Keep this view open while testing terminal registration or device
-          events.
+          New protocol activity is retained in PostgreSQL before it appears
+          here, and remains available after a gateway restart.
         </p>
       </div>
     </template></Card

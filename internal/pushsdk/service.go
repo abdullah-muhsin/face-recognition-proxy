@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itplus/pushsdk-gateway/internal/activity"
 	"github.com/itplus/pushsdk-gateway/internal/config"
 	"github.com/itplus/pushsdk-gateway/internal/monitor"
 	"github.com/itplus/pushsdk-gateway/internal/store"
@@ -31,6 +32,15 @@ type Service struct {
 
 func NewService(cfg config.Config, data *store.Store, hub *monitor.Hub, metrics *Metrics, logger *slog.Logger) *Service {
 	return &Service{config: cfg, sessions: NewSessions(), store: data, hub: hub, metrics: metrics, logger: logger}
+}
+
+func (s *Service) recordGatewayActivity(ctx context.Context, event activity.Event) error {
+	stored, err := s.store.RecordGatewayActivity(ctx, event)
+	if err != nil {
+		return err
+	}
+	s.hub.Publish(stored)
+	return nil
 }
 
 func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -80,7 +90,14 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		status, message := protocolError(err)
 		s.metrics.Requests.WithLabelValues(action, "rejected").Inc()
 		s.logger.Warn("pushsdk request rejected", "terminal", terminal.SerialNumber, "action", action, "status", status, "error", message)
-		s.hub.Publish(monitor.Event{Kind: "pushsdk.rejected", Terminal: terminal.SerialNumber, Message: message, Fields: map[string]any{"action": action, "status": status}})
+		if recordErr := s.recordGatewayActivity(request.Context(), activity.Event{
+			Kind:     activity.KindPushSDKRejected,
+			Terminal: terminal.SerialNumber,
+			Message:  message,
+			Fields:   map[string]any{"action": action, "status": status},
+		}); recordErr != nil {
+			s.logger.Error("record rejected PushSDK request", "terminal", terminal.SerialNumber, "action", action, "error", recordErr)
+		}
 		s.respondError(writer, status, message)
 		return
 	}
@@ -145,7 +162,23 @@ func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body [
 		return protocolResponse{}, fmt.Errorf("create AuthInfo session: %w", err)
 	}
 	session := started.Session
-	if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "authenticating", nil); err != nil {
+	storedActivity, err := s.store.TransitionTerminalState(
+		ctx,
+		terminal.SerialNumber,
+		"authenticating",
+		nil,
+		activity.Event{
+			Kind:     activity.KindPushSDKAuthInfo,
+			Terminal: terminal.SerialNumber,
+			Message:  "terminal started authentication",
+			Fields:   map[string]any{"payloadMode": mode, "securityVersion": terminal.SecurityVersion},
+		},
+	)
+	if err != nil {
+		s.sessions.Remove(terminal.PushSDKSerial)
+		if started.ReplacedAuthenticatedSession {
+			s.metrics.SessionsActive.Dec()
+		}
 		return protocolResponse{}, err
 	}
 	if started.ReplacedAuthenticatedSession {
@@ -155,7 +188,7 @@ func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body [
 	if mode.IsEncrypted() {
 		data.SecurityVersions = []int{terminal.SecurityVersion}
 	}
-	s.hub.Publish(monitor.Event{Kind: "pushsdk.auth_info", Terminal: terminal.SerialNumber, Message: "terminal started authentication", Fields: map[string]any{"payloadMode": mode, "securityVersion": terminal.SecurityVersion}})
+	s.hub.Publish(storedActivity)
 	return protocolResponse{Body: authInfoResponse{Data: data}}, nil
 }
 
@@ -226,16 +259,31 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	if payload.Data.Username != terminal.Username || !constantTimeEqual(payload.Data.LoginPassword, expectedLoginPassword(terminal, session.Salt, session.LoginChallenge, session.Iterations)) {
 		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login credentials are invalid"}
 	}
+	previousChallenge := session.NextChallenge
 	next, err := session.IssueNextChallenge()
 	if err != nil {
 		return protocolResponse{}, nil, err
 	}
 	session.Authenticated = true
-	if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "online", nil); err != nil {
+	storedActivity, err := s.store.TransitionTerminalState(
+		ctx,
+		terminal.SerialNumber,
+		"online",
+		nil,
+		activity.Event{
+			Kind:     activity.KindPushSDKLogin,
+			Terminal: terminal.SerialNumber,
+			Message:  "terminal authenticated",
+			Fields:   map[string]any{"payloadMode": session.PayloadMode, "securityVersion": terminal.SecurityVersion},
+		},
+	)
+	if err != nil {
+		session.Authenticated = false
+		session.NextChallenge = previousChallenge
 		return protocolResponse{}, nil, err
 	}
 	s.metrics.SessionsActive.Inc()
-	s.hub.Publish(monitor.Event{Kind: "pushsdk.login", Terminal: terminal.SerialNumber, Message: "terminal authenticated", Fields: map[string]any{"payloadMode": session.PayloadMode, "securityVersion": terminal.SecurityVersion}})
+	s.hub.Publish(storedActivity)
 	result := protocolResponse{Body: loginResponse{successResponse: succeeded(), Data: loginResponseData{CommandInterval: terminal.CommandIntervalSeconds, ErrorDelay: terminal.ErrorDelaySeconds}}}
 	result.Challenge = next
 	result.session = session
@@ -296,15 +344,26 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 		if len(body) != 0 {
 			return protocolResponse{}, nil, badRequest("Logout body must be empty")
 		}
-		// Keep the key material until this encrypted Logout response is written.
-		// The session is already unauthenticated after this point, and AuthInfo
-		// will replace it on the terminal's next connection.
-		session.Authenticated = false
-		s.metrics.SessionsActive.Dec()
-		if err := s.store.SetTerminalState(ctx, terminal.SerialNumber, "offline", nil); err != nil {
+		storedActivity, err := s.store.TransitionTerminalState(
+			ctx,
+			terminal.SerialNumber,
+			"offline",
+			nil,
+			activity.Event{
+				Kind:     activity.KindPushSDKLogout,
+				Terminal: terminal.SerialNumber,
+				Message:  "terminal logged out",
+			},
+		)
+		if err != nil {
 			return protocolResponse{}, nil, err
 		}
-		s.hub.Publish(monitor.Event{Kind: "pushsdk.logout", Terminal: terminal.SerialNumber, Message: "terminal logged out"})
+		// Keep the key material until this encrypted Logout response is written.
+		// AuthInfo will replace this no-longer-authenticated session when the
+		// terminal connects again.
+		session.Authenticated = false
+		s.metrics.SessionsActive.Dec()
+		s.hub.Publish(storedActivity)
 		result = protocolResponse{Body: succeeded()}
 	}
 	next, err := session.IssueNextChallenge()
@@ -329,18 +388,16 @@ func (s *Service) events(ctx context.Context, terminal config.Terminal, body []b
 		events = append(events, event.Record)
 		results = append(results, eventResponseItem{UUID: event.UUID, successResponse: succeeded()})
 	}
-	inserted, err := s.store.InsertDeviceEventBatch(ctx, events)
+	persisted, err := s.store.InsertDeviceEventBatch(ctx, events)
 	if err != nil {
 		s.metrics.EventsRejected.Inc()
 		return protocolResponse{}, fmt.Errorf("persist Event batch: %w", err)
 	}
-	for index, event := range parsed {
-		if inserted[index] {
+	for index := range parsed {
+		if persisted[index].Inserted {
 			s.metrics.EventsPersisted.Inc()
-			s.hub.Publish(monitor.Event{Kind: "device.event_persisted", Terminal: terminal.SerialNumber, Message: "device event payload persisted", Fields: map[string]any{"eventId": event.UUID, "dataFormat": event.Format}})
-			continue
 		}
-		s.hub.Publish(monitor.Event{Kind: "device.event_duplicate", Terminal: terminal.SerialNumber, Message: "device event payload was already retained", Fields: map[string]any{"eventId": event.UUID, "dataFormat": event.Format}})
+		s.hub.Publish(persisted[index].Activity)
 	}
 	return protocolResponse{Body: results}, nil
 }

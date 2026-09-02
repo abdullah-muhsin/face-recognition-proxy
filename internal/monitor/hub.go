@@ -3,18 +3,9 @@ package monitor
 import (
 	"encoding/json"
 	"sync"
-	"time"
-)
 
-// Event is intentionally metadata-only. Protocol bodies can contain biometric
-// data or credentials; they remain neither a database ledger nor a browser feed.
-type Event struct {
-	At       time.Time      `json:"at"`
-	Kind     string         `json:"kind"`
-	Terminal string         `json:"terminal,omitempty"`
-	Message  string         `json:"message"`
-	Fields   map[string]any `json:"fields,omitempty"`
-}
+	"github.com/itplus/pushsdk-gateway/internal/activity"
+)
 
 type Hub struct {
 	mu      sync.RWMutex
@@ -23,10 +14,9 @@ type Hub struct {
 
 func NewHub() *Hub { return &Hub{clients: make(map[chan []byte]struct{})} }
 
-func (h *Hub) Publish(event Event) {
-	if event.At.IsZero() {
-		event.At = time.Now().UTC()
-	}
+// Publish broadcasts an activity record after it has been committed to
+// PostgreSQL. Raw protocol bodies never enter this metadata-only channel.
+func (h *Hub) Publish(event activity.Event) {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return

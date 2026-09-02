@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itplus/pushsdk-gateway/internal/activity"
 	"github.com/itplus/pushsdk-gateway/internal/config"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -170,19 +172,37 @@ type TerminalState struct {
 	LastError     *string    `json:"lastError"`
 }
 
-func (s *Store) SetTerminalState(ctx context.Context, serial, status string, lastError *string) error {
+// TransitionTerminalState updates a terminal's current state and records the
+// matching operational event in one transaction. A state shown to an operator
+// therefore always has a durable explanation in gateway activity history.
+func (s *Store) TransitionTerminalState(ctx context.Context, serial, status string, lastError *string, event activity.Event) (activity.Event, error) {
+	if event.Terminal != serial {
+		return activity.Event{}, fmt.Errorf("gateway activity terminal %q does not match state transition terminal %q", event.Terminal, serial)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return activity.Event{}, fmt.Errorf("begin terminal state transition: %w", err)
+	}
+	defer tx.Rollback(ctx)
 	command := `UPDATE terminals SET connection_status = $2, last_seen_at = now(), last_error = $3, updated_at = now() WHERE serial_number = $1`
 	if status == "offline" {
 		command = `UPDATE terminals SET connection_status = $2, last_error = $3, updated_at = now() WHERE serial_number = $1`
 	}
-	result, err := s.pool.Exec(ctx, command, serial, status, lastError)
+	result, err := tx.Exec(ctx, command, serial, status, lastError)
 	if err != nil {
-		return fmt.Errorf("set terminal state: %w", err)
+		return activity.Event{}, fmt.Errorf("set terminal state: %w", err)
 	}
 	if result.RowsAffected() != 1 {
-		return fmt.Errorf("terminal %s is not registered", serial)
+		return activity.Event{}, fmt.Errorf("terminal %s is not registered", serial)
 	}
-	return nil
+	stored, err := insertGatewayActivity(ctx, tx, event)
+	if err != nil {
+		return activity.Event{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return activity.Event{}, fmt.Errorf("commit terminal state transition: %w", err)
+	}
+	return stored, nil
 }
 
 func (s *Store) TerminalStates(ctx context.Context) ([]TerminalState, error) {
@@ -225,17 +245,23 @@ type NewDeviceEvent struct {
 	PayloadBase64        string
 }
 
+type DeviceEventPersistence struct {
+	Inserted bool
+	Activity activity.Event
+}
+
 // InsertDeviceEventBatch is atomic: the terminal receives success only when
 // every item in its Event request has been durably retained exactly as sent.
-// Each returned flag aligns with the input and states whether that event was
-// newly inserted rather than a safe vendor-UUID retry.
-func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEvent) ([]bool, error) {
+// Each returned value aligns with the input and records whether that event was
+// newly inserted rather than a safe vendor-UUID retry, together with the
+// matching committed gateway activity.
+func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEvent) ([]DeviceEventPersistence, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	inserted := make([]bool, len(events))
+	persisted := make([]DeviceEventPersistence, len(events))
 	for index, event := range events {
 		result, err := tx.Exec(ctx, `INSERT INTO device_events
 			(terminal_serial_number, vendor_event_id, data_format, payload_base64)
@@ -245,12 +271,29 @@ func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEv
 		if err != nil {
 			return nil, fmt.Errorf("insert device event: %w", err)
 		}
-		inserted[index] = result.RowsAffected() == 1
+		persisted[index].Inserted = result.RowsAffected() == 1
+		kind, message := activity.KindDeviceEventDuplicate, "device event payload was already retained"
+		if persisted[index].Inserted {
+			kind, message = activity.KindDeviceEventPersisted, "device event payload persisted"
+		}
+		storedActivity, err := insertGatewayActivity(ctx, tx, activity.Event{
+			Kind:     kind,
+			Terminal: event.TerminalSerialNumber,
+			Message:  message,
+			Fields: map[string]any{
+				"eventId":    event.VendorEventID,
+				"dataFormat": event.DataFormat,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		persisted[index].Activity = storedActivity
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return inserted, nil
+	return persisted, nil
 }
 
 type DeviceEventPage struct {
@@ -311,6 +354,81 @@ func (s *Store) DeviceEventPayload(ctx context.Context, id int64) (DeviceEventPa
 	return payload, true, nil
 }
 
+type GatewayActivityPage struct {
+	Activities []activity.Event `json:"activities"`
+	Total      int64            `json:"total"`
+}
+
+func (s *Store) GatewayActivities(ctx context.Context, limit, offset int) (GatewayActivityPage, error) {
+	var page GatewayActivityPage
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM gateway_activities`).Scan(&page.Total); err != nil {
+		return page, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, occurred_at, kind, terminal_serial_number, message, fields
+		FROM gateway_activities ORDER BY occurred_at DESC, id DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return page, err
+	}
+	defer rows.Close()
+	page.Activities = []activity.Event{}
+	for rows.Next() {
+		var event activity.Event
+		var terminal *string
+		var fields []byte
+		if err := rows.Scan(&event.ID, &event.At, &event.Kind, &terminal, &event.Message, &fields); err != nil {
+			return page, err
+		}
+		if terminal != nil {
+			event.Terminal = *terminal
+		}
+		if err := json.Unmarshal(fields, &event.Fields); err != nil {
+			return page, fmt.Errorf("decode gateway activity %d fields: %w", event.ID, err)
+		}
+		page.Activities = append(page.Activities, event)
+	}
+	return page, rows.Err()
+}
+
+func (s *Store) RecordGatewayActivity(ctx context.Context, event activity.Event) (activity.Event, error) {
+	stored, err := insertGatewayActivity(ctx, s.pool, event)
+	if err != nil {
+		return activity.Event{}, err
+	}
+	return stored, nil
+}
+
+type activityQueryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func insertGatewayActivity(ctx context.Context, queryer activityQueryer, event activity.Event) (activity.Event, error) {
+	if event.Kind == "" {
+		return activity.Event{}, errors.New("gateway activity kind is required")
+	}
+	if event.Message == "" {
+		return activity.Event{}, errors.New("gateway activity message is required")
+	}
+	fields := []byte(`{}`)
+	if event.Fields != nil {
+		encoded, err := json.Marshal(event.Fields)
+		if err != nil {
+			return activity.Event{}, fmt.Errorf("encode gateway activity fields: %w", err)
+		}
+		fields = encoded
+	}
+	var terminal any
+	if event.Terminal != "" {
+		terminal = event.Terminal
+	}
+	if err := queryer.QueryRow(ctx, `INSERT INTO gateway_activities
+		(kind, terminal_serial_number, message, fields)
+		VALUES ($1, $2, $3, $4::jsonb)
+		RETURNING id, occurred_at`, event.Kind, terminal, event.Message, string(fields)).Scan(&event.ID, &event.At); err != nil {
+		return activity.Event{}, fmt.Errorf("record gateway activity: %w", err)
+	}
+	return event, nil
+}
+
 func (s *Store) VerifyAdmin(ctx context.Context, username, password string) (int64, bool, error) {
 	var id int64
 	var encoded string
@@ -327,9 +445,23 @@ func (s *Store) VerifyAdmin(ctx context.Context, username, password string) (int
 	return id, true, nil
 }
 
-func (s *Store) CreateSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO admin_sessions (admin_user_id, token_hash, expires_at) VALUES ($1,$2,$3)`, userID, tokenHash, expiresAt)
-	return err
+func (s *Store) CreateSessionWithActivity(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time, event activity.Event) (activity.Event, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return activity.Event{}, fmt.Errorf("begin admin session: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO admin_sessions (admin_user_id, token_hash, expires_at) VALUES ($1,$2,$3)`, userID, tokenHash, expiresAt); err != nil {
+		return activity.Event{}, fmt.Errorf("create admin session: %w", err)
+	}
+	stored, err := insertGatewayActivity(ctx, tx, event)
+	if err != nil {
+		return activity.Event{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return activity.Event{}, fmt.Errorf("commit admin session: %w", err)
+	}
+	return stored, nil
 }
 
 func (s *Store) SessionValid(ctx context.Context, tokenHash []byte) (bool, error) {
@@ -338,9 +470,23 @@ func (s *Store) SessionValid(ctx context.Context, tokenHash []byte) (bool, error
 	return found, err
 }
 
-func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM admin_sessions WHERE token_hash = $1`, tokenHash)
-	return err
+func (s *Store) DeleteSessionWithActivity(ctx context.Context, tokenHash []byte, event activity.Event) (activity.Event, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return activity.Event{}, fmt.Errorf("begin admin sign out: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM admin_sessions WHERE token_hash = $1`, tokenHash); err != nil {
+		return activity.Event{}, fmt.Errorf("delete admin session: %w", err)
+	}
+	stored, err := insertGatewayActivity(ctx, tx, event)
+	if err != nil {
+		return activity.Event{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return activity.Event{}, fmt.Errorf("commit admin sign out: %w", err)
+	}
+	return stored, nil
 }
 
 func (s *Store) PurgeExpiredSessions(ctx context.Context) error {

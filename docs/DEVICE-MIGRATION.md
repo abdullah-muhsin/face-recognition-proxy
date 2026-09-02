@@ -40,7 +40,8 @@ online registration before continuing.
    move and no rejected-event counter increases.
 7. Test a terminal logout/reconnect and a gateway restart. The console must show
    offline after restart until the terminal performs `AuthInfo` and `Login`
-   again.
+   again. Device Events and Gateway Activity must still show the records from
+   before the restart.
 
 ## Gateway restart recovery
 

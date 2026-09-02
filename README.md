@@ -10,7 +10,7 @@ Vue 3/Vite (JavaScript), Tailwind CSS, PrimeVue, WebSockets, and Prometheus.
 | `/iot/{pushSdkSerial}/global/0-global/model/service/operate/PUSH/...` | Hikvision terminal | Strict PushSDK protocol endpoint |
 | `/app/` | Operators | Vue console |
 | `/api/v1/...` | Vue console | Same-origin authenticated administration API |
-| `/ws/v1/monitor` | Vue console | Authenticated live operational metadata |
+| `/ws/v1/monitor` | Vue console | Authenticated replay and live stream of retained operational metadata |
 | `/metrics` | Prometheus only | Private metric endpoint |
 | `/healthz`, `/readyz` | Infrastructure | Liveness and database readiness |
 
@@ -20,22 +20,24 @@ requests by path and upgrades the browser monitoring WebSocket only at `/ws/`.
 
 ## Data and security model
 
-PostgreSQL stores registered terminals, raw device-event source values, and
-hashed operator sessions. Every valid PushSDK `eventList` item is deduplicated
-with the terminal serial plus its vendor UUID, so device retries are safe and
-do not create duplicate events.
+PostgreSQL stores registered terminals, raw device-event source values,
+gateway activity, and hashed operator sessions. Every valid PushSDK
+`eventList` item is deduplicated with the terminal serial plus its vendor UUID,
+so device retries are safe and do not create duplicate events.
 
-The gateway does not contain an HTTP forwarder, queue, SQLite fallback, or
-separate audit-event ledger. A successfully acknowledged device event has
-already been committed to PostgreSQL. If PostgreSQL is unavailable, the event
-is rejected so the terminal can retry; it is never silently dropped.
+The gateway does not contain an HTTP forwarder, queue, SQLite fallback, or an
+external data store. A successfully acknowledged device event has already been
+committed to PostgreSQL. If PostgreSQL is unavailable, the event is rejected so
+the terminal can retry; it is never silently dropped.
 
-Live monitor messages and JSON logs contain status and protocol metadata only.
-They deliberately exclude encrypted protocol bodies and terminal credentials.
-Raw device-event data is retained only in PostgreSQL and is available only to a
-signed-in operator through Device Events; it is never broadcast through the
-monitor or emitted in logs. An event payload can contain sensitive vendor data,
-including binary media, so operator credentials control access to it.
+Gateway activity retains only status and protocol metadata; it deliberately
+excludes encrypted protocol bodies and terminal credentials. Each activity
+record is committed to PostgreSQL before its live monitor broadcast, so monitor
+history survives a gateway restart. Raw device-event data is retained only in
+PostgreSQL and is available only to a signed-in operator through Device Events;
+it is never broadcast through the monitor or emitted in logs. An event payload
+can contain sensitive vendor data, including binary media, so operator
+credentials control access to it.
 
 ## Strict PushSDK contract
 
