@@ -251,7 +251,18 @@ func (s *Server) deviceEventPayload(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusNotFound, "device event not found")
 		return
 	}
-	writeJSON(writer, http.StatusOK, payload)
+	response := deviceEventPayloadResponse{DeviceEventPayload: payload}
+	if payload.PayloadBase64 != nil {
+		if picture, found := accesscontrol.ExtractPicture(payload.DataFormat, *payload.PayloadBase64); found {
+			response.Picture = &picture
+		}
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+type deviceEventPayloadResponse struct {
+	store.DeviceEventPayload
+	Picture *accesscontrol.Picture `json:"picture,omitempty"`
 }
 
 func (s *Server) gatewayActivity(writer http.ResponseWriter, request *http.Request) {

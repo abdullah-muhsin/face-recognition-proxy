@@ -557,7 +557,20 @@ func insertAccessEventProjection(ctx context.Context, tx pgx.Tx, deviceEventID i
 	if !classified {
 		_, err := tx.Exec(ctx, `INSERT INTO access_event_projections
 			(device_event_id, schema_version, classification_status)
-			VALUES ($1, $2, 'unclassified')`, deviceEventID, accesscontrol.SchemaVersion)
+			VALUES ($1, $2, 'unclassified')
+			ON CONFLICT (device_event_id) DO UPDATE SET
+				schema_version = EXCLUDED.schema_version,
+				classification_status = EXCLUDED.classification_status,
+				major_event_type = NULL,
+				sub_event_type = NULL,
+				event_description = NULL,
+				occurred_at = NULL,
+				employee_number = NULL,
+				employee_name = NULL,
+				card_number = NULL,
+				card_reader_number = NULL,
+				door_number = NULL,
+				source_ip_address = NULL`, deviceEventID, accesscontrol.SchemaVersion)
 		if err != nil {
 			return fmt.Errorf("record unclassified access event: %w", err)
 		}
@@ -567,7 +580,20 @@ func insertAccessEventProjection(ctx context.Context, tx pgx.Tx, deviceEventID i
 		(device_event_id, schema_version, classification_status, major_event_type, sub_event_type,
 		event_description, occurred_at, employee_number, employee_name, card_number,
 		card_reader_number, door_number, source_ip_address)
-		VALUES ($1, $2, 'classified', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		VALUES ($1, $2, 'classified', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (device_event_id) DO UPDATE SET
+		schema_version = EXCLUDED.schema_version,
+		classification_status = EXCLUDED.classification_status,
+		major_event_type = EXCLUDED.major_event_type,
+		sub_event_type = EXCLUDED.sub_event_type,
+		event_description = EXCLUDED.event_description,
+		occurred_at = EXCLUDED.occurred_at,
+		employee_number = EXCLUDED.employee_number,
+		employee_name = EXCLUDED.employee_name,
+		card_number = EXCLUDED.card_number,
+		card_reader_number = EXCLUDED.card_reader_number,
+		door_number = EXCLUDED.door_number,
+		source_ip_address = EXCLUDED.source_ip_address`,
 		deviceEventID, accesscontrol.SchemaVersion, projection.MajorEventType, projection.SubEventType,
 		projection.EventDescription, projection.OccurredAt, projection.EmployeeNumber, projection.EmployeeName,
 		projection.CardNumber, projection.CardReaderNumber, projection.DoorNumber, projection.SourceIPAddress)
@@ -578,8 +604,8 @@ func insertAccessEventProjection(ctx context.Context, tx pgx.Tx, deviceEventID i
 }
 
 // BackfillAccessEventProjections applies the same strict extractor to raw
-// archive rows that predate the projection. Every eligible row receives one
-// terminal status, so completed rows are never interpreted again.
+// archive rows that predate the current projection schema. Every row is
+// interpreted at most once per explicit schema version.
 func (s *Store) BackfillAccessEventProjections(ctx context.Context) (int64, error) {
 	var projected int64
 	for {
@@ -590,10 +616,10 @@ func (s *Store) BackfillAccessEventProjections(ctx context.Context) (int64, erro
 		rows, err := tx.Query(ctx, `SELECT de.id, de.data_format, de.payload_base64
 			FROM device_events de
 			LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
-			WHERE ace.device_event_id IS NULL
+			WHERE ace.device_event_id IS NULL OR ace.schema_version < $1
 			ORDER BY de.id
 			LIMIT 500
-			FOR UPDATE OF de SKIP LOCKED`)
+			FOR UPDATE OF de SKIP LOCKED`, accesscontrol.SchemaVersion)
 		if err != nil {
 			_ = tx.Rollback(ctx)
 			return projected, fmt.Errorf("load event projection backfill batch: %w", err)

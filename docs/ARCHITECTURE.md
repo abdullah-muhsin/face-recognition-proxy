@@ -48,13 +48,21 @@ gateway activity is separate safe operational metadata, not a parsed
 compatibility model or a second copy of the device payload.
 
 The access-event projection is not a compatibility parser. It accepts only a
-declared `jsonData` `AccessControllerEvent` containing numeric
-`majorEventType` and `subEventType` fields. Its raw source continues to be the
-forensic record. Missing, malformed, binary, XML, or other vendor event forms
-are retained and receive an explicit unclassified projection status. No field
-is inferred, no device time is substituted with receipt time, and subtype
-labels are returned only when the retained source description is consistent for
-that exact category/code.
+declared JSON `AccessControllerEvent` containing numeric `majorEventType` and
+`subEventType` fields, either as `jsonData` or as the single JSON form part
+explicitly named `AccessControllerEvent` within a documented `boundaryData`
+multipart envelope. Its raw source continues to be the forensic record.
+Missing, malformed, binary, XML, or other vendor event forms are retained and
+receive an explicit unclassified projection status. No field is inferred, no
+device time is substituted with receipt time, and subtype labels are returned
+only when the retained source description is consistent for that exact
+category/code.
+
+The authenticated Event Archive may display a picture only when the same
+documented multipart envelope contains one form part explicitly named
+`Picture`, declared as `image/jpeg`, and supplied with a filename. The browser
+receives that exact part's bytes; no image is detected, derived, resized, or
+stored separately.
 
 Adding a new terminal capability is a schema and protocol change: document the
 vendor wire form, add a migration and tests, then release it. Do not add a

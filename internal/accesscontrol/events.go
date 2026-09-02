@@ -4,15 +4,19 @@
 package accesscontrol
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
+	"net/textproto"
 	"time"
 )
 
 const (
-	SchemaVersion  = 1
+	SchemaVersion  = 2
 	MajorAlarm     = 1
 	MajorException = 2
 	MajorOperation = 3
@@ -62,6 +66,14 @@ type Projection struct {
 	SourceIPAddress  *string
 }
 
+// Picture is an exact JPEG part declared by a terminal multipart event.
+type Picture struct {
+	ContentType string `json:"contentType"`
+	FileName    string `json:"fileName"`
+	ContentID   string `json:"contentId,omitempty"`
+	DataBase64  string `json:"dataBase64"`
+}
+
 type accessControllerEvent struct {
 	MajorEventType   *int    `json:"majorEventType"`
 	SubEventType     *int    `json:"subEventType"`
@@ -84,11 +96,16 @@ type eventDocument struct {
 // event form. It makes no inference for other event types, formats, missing
 // category codes, or malformed declared timestamps.
 func Extract(dataFormat, payloadBase64 string) (Projection, bool) {
-	if dataFormat != "jsonData" {
-		return Projection{}, false
-	}
 	payload, err := base64.StdEncoding.DecodeString(payloadBase64)
 	if err != nil {
+		return Projection{}, false
+	}
+	if dataFormat == "boundaryData" {
+		payload, err = accessControllerEventPart(payload)
+		if err != nil {
+			return Projection{}, false
+		}
+	} else if dataFormat != "jsonData" {
 		return Projection{}, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
@@ -127,4 +144,115 @@ func Extract(dataFormat, payloadBase64 string) (Projection, bool) {
 		DoorNumber:       access.DoorNo,
 		SourceIPAddress:  document.IPAddress,
 	}, true
+}
+
+// accessControllerEventPart accepts only the documented multipart wrapper used
+// by the terminal: multipart/form-data with exactly one JSON form part named
+// AccessControllerEvent. It does not scan arbitrary boundary bytes for JSON.
+func accessControllerEventPart(payload []byte) ([]byte, error) {
+	parts, err := multipartFormParts(payload)
+	if err != nil {
+		return nil, err
+	}
+	var eventPayload []byte
+	for _, part := range parts {
+		if part.name != "AccessControllerEvent" {
+			continue
+		}
+		if part.mediaType != "application/json" || eventPayload != nil {
+			return nil, io.ErrUnexpectedEOF
+		}
+		eventPayload = part.data
+	}
+	if eventPayload == nil {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return eventPayload, nil
+}
+
+// ExtractPicture returns only the explicitly declared JPEG Picture form part.
+// It never attempts image detection, transcoding, or recovery from arbitrary
+// boundary bytes.
+func ExtractPicture(dataFormat, payloadBase64 string) (Picture, bool) {
+	if dataFormat != "boundaryData" {
+		return Picture{}, false
+	}
+	payload, err := base64.StdEncoding.DecodeString(payloadBase64)
+	if err != nil {
+		return Picture{}, false
+	}
+	parts, err := multipartFormParts(payload)
+	if err != nil {
+		return Picture{}, false
+	}
+	var picture *Picture
+	for _, part := range parts {
+		if part.name != "Picture" {
+			continue
+		}
+		if part.mediaType != "image/jpeg" || part.fileName == "" || picture != nil {
+			return Picture{}, false
+		}
+		picture = &Picture{
+			ContentType: part.mediaType,
+			FileName:    part.fileName,
+			ContentID:   part.contentID,
+			DataBase64:  base64.StdEncoding.EncodeToString(part.data),
+		}
+	}
+	if picture == nil {
+		return Picture{}, false
+	}
+	return *picture, true
+}
+
+type multipartFormPart struct {
+	name      string
+	fileName  string
+	contentID string
+	mediaType string
+	data      []byte
+}
+
+func multipartFormParts(payload []byte) ([]multipartFormPart, error) {
+	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(payload)))
+	header, err := reader.ReadMIMEHeader()
+	if err != nil {
+		return nil, err
+	}
+	mediaType, parameters, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" || parameters["boundary"] == "" {
+		return nil, io.ErrUnexpectedEOF
+	}
+	multipartReader := multipart.NewReader(reader.R, parameters["boundary"])
+	parts := []multipartFormPart{}
+	for {
+		part, err := multipartReader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		disposition, parameters, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+		if err != nil || disposition != "form-data" || parameters["name"] == "" {
+			return nil, io.ErrUnexpectedEOF
+		}
+		mediaType, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+		if err != nil {
+			return nil, io.ErrUnexpectedEOF
+		}
+		data, err := io.ReadAll(part)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, multipartFormPart{
+			name:      parameters["name"],
+			fileName:  parameters["filename"],
+			contentID: part.Header.Get("Content-ID"),
+			mediaType: mediaType,
+			data:      data,
+		})
+	}
+	return parts, nil
 }

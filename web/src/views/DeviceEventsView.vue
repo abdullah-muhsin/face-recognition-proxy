@@ -56,6 +56,11 @@ const currentPageEnd = computed(() =>
 const payloadCaptured = computed(
   () => typeof selectedPayload.value?.payloadBase64 === 'string',
 )
+const pictureSource = computed(() => {
+  const picture = selectedPayload.value?.picture
+  if (!picture) return null
+  return `data:${picture.contentType};base64,${picture.dataBase64}`
+})
 const payloadBytes = computed(() => {
   if (!payloadCaptured.value) return null
   try {
@@ -504,6 +509,26 @@ async function copyReadablePayload() {
         bytes appear as <code>\xHH</code> so no bytes are hidden; downloading
         always yields the exact source bytes.
       </Message>
+      <figure
+        v-if="pictureSource"
+        class="mt-5 overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
+      >
+        <div
+          class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3"
+        >
+          <figcaption class="text-sm font-medium text-slate-800">
+            Terminal-supplied picture
+          </figcaption>
+          <span class="text-xs text-slate-500">
+            {{ selectedPayload.picture.fileName }} · exact JPEG part
+          </span>
+        </div>
+        <img
+          :src="pictureSource"
+          alt="Terminal-supplied access-event picture"
+          class="max-h-[32rem] w-full bg-slate-950 object-contain"
+        />
+      </figure>
       <template v-if="payloadCaptured">
         <Textarea
           :model-value="readablePayloadText"

@@ -83,13 +83,17 @@ This gateway intentionally accepts only the documented protocol forms:
 - The source `eventList.data` base64 string is persisted verbatim for every
   valid item. An independent, versioned read model recognizes only documented
   JSON `AccessControllerEvent` payloads with explicit numeric category and
-  subtype codes. It never alters the source payload, infers a missing field,
-  or labels an inconsistent subtype; all other JSON, XML, multipart, and binary
-  bodies remain explicitly unclassified in Event Archive.
+  subtype codes, including the documented multipart form part of a
+  `boundaryData` envelope. It never alters the source payload, infers a missing
+  field, or labels an inconsistent subtype; all other JSON, XML, multipart, and
+  binary bodies remain explicitly unclassified in Event Archive.
 - Event Archive decodes that retained source only in the signed-in administrator
   browser: valid UTF-8 is rendered verbatim, while non-text bytes are shown as
   `\xHH`. The UI never displays the vendor's base64 transport value, omits no
   bytes from its readable representation, and offers an exact-byte download.
+  For a documented multipart `Picture` part explicitly declared as JPEG, it
+  also displays those exact image bytes without resizing, transcoding, or
+  reconstructing the source.
 
 ## Local run
 
