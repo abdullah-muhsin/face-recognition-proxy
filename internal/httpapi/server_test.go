@@ -28,6 +28,11 @@ func TestDeviceEventQueryUsesExplicitCategoryAndSubtypeCodes(t *testing.T) {
 	if query.Terminal != "DS-K1" {
 		t.Fatalf("terminal = %q, want DS-K1", query.Terminal)
 	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/events?source=isapi", nil)
+	query, err = deviceEventQuery(request, 25, 0)
+	if err != nil || query.Source != "isapi" {
+		t.Fatalf("source query = %#v, %v", query, err)
+	}
 }
 
 func TestParseISAPICommandInputPreservesTextBytes(t *testing.T) {
@@ -151,6 +156,7 @@ func TestDeviceEventQueryRejectsAmbiguousAndInvalidFilters(t *testing.T) {
 		"category=event&category=alarm",
 		"category=unknown",
 		"category=event&subtype=-1",
+		"source=unknown",
 		"category=event&extra=value",
 	} {
 		t.Run(rawQuery, func(t *testing.T) {

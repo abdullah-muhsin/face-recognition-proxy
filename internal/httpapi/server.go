@@ -67,10 +67,13 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/logout", s.withSession(s.logout))
 	mux.HandleFunc("GET /api/v1/admin/overview", s.withSession(s.overview))
 	mux.HandleFunc("GET /api/v1/admin/events", s.withSession(s.deviceEvents))
+	mux.HandleFunc("GET /api/v1/admin/events/{source}/{id}/payload", s.withSession(s.archiveEventPayload))
 	mux.HandleFunc("GET /api/v1/admin/events/{id}/payload", s.withSession(s.deviceEventPayload))
 	mux.HandleFunc("GET /api/v1/admin/isapi-commands", s.withSession(s.isapiCommands))
 	mux.HandleFunc("GET /api/v1/admin/isapi-commands/{uuid}", s.withSession(s.isapiCommandPayload))
 	mux.HandleFunc("POST /api/v1/admin/terminals/{serial}/isapi-commands", s.withSession(s.queueISAPICommand))
+	mux.HandleFunc("POST /api/v1/admin/terminals/{serial}/retained-event-syncs", s.withSession(s.queueAccessEventSync))
+	mux.HandleFunc("GET /api/v1/admin/retained-event-syncs/{uuid}", s.withSession(s.accessEventSyncRun))
 	mux.HandleFunc("GET /api/v1/admin/activity", s.withSession(s.gatewayActivity))
 	mux.HandleFunc("GET /ws/v1/monitor", s.withSession(s.monitorSocket))
 	mux.HandleFunc("/", s.redirectRoot)
@@ -209,7 +212,7 @@ func deviceEventQuery(request *http.Request, limit, offset int) (store.DeviceEve
 	values := request.URL.Query()
 	for key, values := range values {
 		switch key {
-		case "limit", "offset", "category", "subtype", "terminal":
+		case "limit", "offset", "category", "subtype", "terminal", "source":
 		default:
 			return store.DeviceEventQuery{}, fmt.Errorf("unsupported events query parameter %q", key)
 		}
@@ -242,6 +245,12 @@ func deviceEventQuery(request *http.Request, limit, offset int) (store.DeviceEve
 		}
 		query.Terminal = terminal[0]
 	}
+	if source, present := values["source"]; present && source[0] != "all" {
+		if source[0] != "pushsdk" && source[0] != "isapi" {
+			return store.DeviceEventQuery{}, errors.New("source must be one of all, pushsdk, or isapi")
+		}
+		query.Source = source[0]
+	}
 	return query, nil
 }
 
@@ -254,6 +263,34 @@ func (s *Server) deviceEventPayload(writer http.ResponseWriter, request *http.Re
 	payload, found, err := s.store.DeviceEventPayload(request.Context(), id)
 	if err != nil {
 		s.internalError(writer, "load device event payload", err)
+		return
+	}
+	if !found {
+		writeError(writer, http.StatusNotFound, "device event not found")
+		return
+	}
+	response := deviceEventPayloadResponse{DeviceEventPayload: payload}
+	if payload.PayloadBase64 != nil {
+		if picture, found := accesscontrol.ExtractPicture(payload.DataFormat, *payload.PayloadBase64); found {
+			response.Picture = &picture
+		}
+	}
+	writeJSON(writer, http.StatusOK, response)
+}
+
+func (s *Server) archiveEventPayload(writer http.ResponseWriter, request *http.Request) {
+	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		writeError(writer, http.StatusBadRequest, "event id must be a positive integer")
+		return
+	}
+	payload, found, err := s.store.ArchiveEventPayload(request.Context(), request.PathValue("source"), id)
+	if err != nil {
+		if errors.Is(err, store.ErrUnknownArchiveEventSource) {
+			writeError(writer, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.internalError(writer, "load event archive payload", err)
 		return
 	}
 	if !found {
@@ -331,6 +368,57 @@ func (s *Server) queueISAPICommand(writer http.ResponseWriter, request *http.Req
 	}
 	s.hub.Publish(stored)
 	writeJSON(writer, http.StatusCreated, command)
+}
+
+func (s *Server) queueAccessEventSync(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.RawQuery != "" {
+		writeError(writer, http.StatusBadRequest, "retained event sync does not accept query parameters")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(writer, request.Body, 1))
+	if err != nil {
+		writeError(writer, http.StatusRequestEntityTooLarge, "retained event sync request must not have a body")
+		return
+	}
+	if len(body) != 0 {
+		writeError(writer, http.StatusBadRequest, "retained event sync request must not have a body")
+		return
+	}
+	identity, found := administratorIdentity(request.Context())
+	if !found {
+		s.internalError(writer, "load administrator identity for retained event sync", errors.New("identity missing from authenticated request"))
+		return
+	}
+	run, activities, err := s.store.QueueAccessEventSync(request.Context(), request.PathValue("serial"), identity)
+	if errors.Is(err, store.ErrAccessEventSyncTerminalNotFound) {
+		writeError(writer, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrAccessEventSyncTerminalOffline) || errors.Is(err, store.ErrAccessEventSyncInProgress) {
+		writeError(writer, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		s.internalError(writer, "queue retained event sync", err)
+		return
+	}
+	for _, stored := range activities {
+		s.hub.Publish(stored)
+	}
+	writeJSON(writer, http.StatusCreated, run)
+}
+
+func (s *Server) accessEventSyncRun(writer http.ResponseWriter, request *http.Request) {
+	run, found, err := s.store.AccessEventSyncRun(request.Context(), request.PathValue("uuid"))
+	if err != nil {
+		s.internalError(writer, "load retained event sync", err)
+		return
+	}
+	if !found {
+		writeError(writer, http.StatusNotFound, "retained event sync not found")
+		return
+	}
+	writeJSON(writer, http.StatusOK, run)
 }
 
 type parsedISAPICommandInput struct {

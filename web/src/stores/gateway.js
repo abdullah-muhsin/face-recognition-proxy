@@ -12,6 +12,11 @@ const snapshotActivityKinds = new Set([
   'pushsdk.login',
   'pushsdk.logout',
   'pushsdk.session_resumed',
+  'admin.access_event_sync_queued',
+  'device.access_event_sync_started',
+  'device.access_event_sync_page_captured',
+  'device.access_event_sync_completed',
+  'device.access_event_sync_failed',
 ])
 const commandActivityKinds = new Set([
   'admin.isapi_command_queued',
@@ -34,7 +39,12 @@ export const useGatewayStore = defineStore('gateway', () => {
   const deviceEvents = ref([])
   const deviceEventsTotal = ref(0)
   const deviceEventsOffset = ref(0)
-  const deviceEventQuery = ref({ category: 'all', subtype: null, terminal: '' })
+  const deviceEventQuery = ref({
+    category: 'all',
+    subtype: null,
+    terminal: '',
+    source: 'all',
+  })
   const deviceEventSubtypes = ref([])
   const gatewayActivities = ref([])
   const gatewayActivitiesTotal = ref(0)
@@ -97,6 +107,7 @@ export const useGatewayStore = defineStore('gateway', () => {
       if (query.subtype !== null)
         parameters.set('subtype', String(query.subtype))
       if (query.terminal !== '') parameters.set('terminal', query.terminal)
+      if (query.source !== 'all') parameters.set('source', query.source)
       const page = await request(`/api/v1/admin/events?${parameters}`)
       deviceEventsOffset.value = offset
       deviceEventQuery.value = { ...query }
@@ -108,8 +119,19 @@ export const useGatewayStore = defineStore('gateway', () => {
     }
   }
 
-  function loadDeviceEventPayload(id) {
-    return request(`/api/v1/admin/events/${id}/payload`)
+  function loadDeviceEventPayload(source, id) {
+    return request(`/api/v1/admin/events/${encodeURIComponent(source)}/${id}/payload`)
+  }
+
+  function queueAccessEventSync(serial) {
+    return request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/retained-event-syncs`,
+      { method: 'POST' },
+    )
+  }
+
+  function loadAccessEventSync(uuid) {
+    return request(`/api/v1/admin/retained-event-syncs/${encodeURIComponent(uuid)}`)
   }
 
   async function loadGatewayActivities(offset = gatewayActivitiesOffset.value) {
@@ -383,6 +405,8 @@ export const useGatewayStore = defineStore('gateway', () => {
     refresh,
     loadDeviceEvents,
     loadDeviceEventPayload,
+    queueAccessEventSync,
+    loadAccessEventSync,
     loadGatewayActivities,
     loadISAPICommands,
     loadISAPICommandPayload,

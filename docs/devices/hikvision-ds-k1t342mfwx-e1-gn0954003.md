@@ -87,6 +87,32 @@ device-event support. Once it is online, gateway operators can submit any
 documented ISAPI command through the audited PushSDK command API; the command
 remains queued until the terminal polls for it.
 
+## Verified retained-event reconciliation contract
+
+Authenticated read-only probes on 2026-09-03 confirmed the terminal's native
+retained access-event API. The gateway uses this contract for the Terminal
+Registry **Sync retained events** action; it does not automate or depend on the
+device web-console endpoints.
+
+| Contract element | Verified value |
+| --- | --- |
+| Search endpoint | `POST /ISAPI/AccessControl/AcsEvent?format=json` |
+| Device-time endpoint | `GET /ISAPI/System/time` (documented `Time.localTime` XML) |
+| Earliest accepted all-history start | `2000-01-01T00:00:00+08:00` |
+| All-category selector | `major: 0`, `minor: 0` |
+| Maximum page size | `30` |
+| Maximum result position / retained total | `150000` |
+| Pagination statuses observed | `MORE`, `OK`, `NO MATCH` |
+| Event categories advertised | alarm `1`, exception `2`, operation `3`, event `5` |
+
+The gateway first obtains the device `localTime` and uses that exact timestamp
+as the end bound. It does not use a transient IP address, browser time, or host
+time to define the archive search. It records the raw ISAPI page in the command
+audit and retains each raw `InfoList` record separately. Since an `InfoList`
+record has no PushSDK UUID and its `serialNo` can eventually wrap, deduplication
+uses the exact record bytes' SHA-256 fingerprint within this terminal; the
+numeric serial is retained as source context, not promoted to a global ID.
+
 ## Acceptance record
 
 After the first online registration, the gateway delivered a read-only

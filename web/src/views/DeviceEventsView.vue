@@ -21,9 +21,15 @@ const categories = [
   { value: 'exception', label: 'Exception' },
   { value: 'alarm', label: 'Alarm' },
 ]
+const sources = [
+  { value: 'all', label: 'All sources' },
+  { value: 'pushsdk', label: 'PushSDK delivery' },
+  { value: 'isapi', label: 'Retained ISAPI history' },
+]
 const category = ref(gateway.deviceEventQuery.category)
 const subtype = ref(gateway.deviceEventQuery.subtype)
 const terminal = ref(gateway.deviceEventQuery.terminal)
+const source = ref(gateway.deviceEventQuery.source)
 
 const selectedCategory = computed(() =>
   categories.find((item) => item.value === category.value),
@@ -33,6 +39,7 @@ const currentQuery = computed(() => ({
   category: category.value,
   subtype: subtype.value,
   terminal: terminal.value,
+  source: source.value,
 }))
 const selectedSubtypeLabel = computed(() => {
   const selected = gateway.deviceEventSubtypes.find(
@@ -174,6 +181,10 @@ async function selectTerminal() {
   await refresh()
 }
 
+async function selectSource() {
+  await refresh()
+}
+
 function categoryLabel(accessEvent) {
   const category = categories.find(
     (item) => item.value === accessEvent.category,
@@ -209,7 +220,10 @@ async function inspectPayload(event) {
   payloadVisible.value = true
   payloadLoading.value = true
   try {
-    selectedPayload.value = await gateway.loadDeviceEventPayload(event.id)
+    selectedPayload.value = await gateway.loadDeviceEventPayload(
+      event.source,
+      event.id,
+    )
   } catch (error) {
     await handleFailure(error, 'Could not load raw payload')
     payloadVisible.value = false
@@ -235,7 +249,7 @@ function downloadPayload() {
   const link = document.createElement('a')
   const objectURL = URL.createObjectURL(blob)
   link.href = objectURL
-  link.download = `${selectedPayload.value.vendorEventId}.${payloadExtension(selectedPayload.value.dataFormat)}`
+  link.download = `${selectedPayload.value.sourceRecordId}.${payloadExtension(selectedPayload.value.dataFormat)}`
   link.click()
   URL.revokeObjectURL(objectURL)
 }
@@ -310,7 +324,7 @@ async function copyReadablePayload() {
             />
           </div>
           <span v-else class="text-sm text-slate-500"
-            >All source formats and classification states</span
+            >All retained source records and classification states</span
           >
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -328,6 +342,17 @@ async function copyReadablePayload() {
               :value="item.serialNumber"
             >
               {{ item.serialNumber }}
+            </option>
+          </select>
+          <label class="sr-only" for="event-source">Archive source</label>
+          <select
+            id="event-source"
+            v-model="source"
+            class="h-9 min-w-48 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+            @change="selectSource"
+          >
+            <option v-for="item in sources" :key="item.value" :value="item.value">
+              {{ item.label }}
             </option>
           </select>
           <Button
@@ -362,7 +387,7 @@ async function copyReadablePayload() {
       scroll-height="flex"
       class="text-sm"
     >
-      <Column header="Received">
+      <Column header="Archived">
         <template #body="{ data }">
           <div>
             <p class="font-medium text-slate-800">
@@ -464,11 +489,11 @@ async function copyReadablePayload() {
         <template #body="{ data }">
           <code
             class="block max-w-48 truncate text-xs text-slate-700"
-            :title="data.vendorEventId"
-            >{{ data.vendorEventId }}</code
+            :title="data.sourceRecordId"
+            >{{ data.sourceRecordId }}</code
           >
           <Tag
-            :value="data.dataFormat"
+            :value="data.source === 'isapi' ? 'Retained ISAPI' : 'PushSDK delivery'"
             severity="secondary"
             rounded
             class="mt-1"
@@ -547,18 +572,18 @@ async function copyReadablePayload() {
       >
         <div>
           <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-            Vendor event ID
+            Source record ID
           </p>
           <code class="mt-1 block break-all text-xs text-slate-700">{{
-            selectedPayload.vendorEventId
+            selectedPayload.sourceRecordId
           }}</code>
         </div>
         <div>
           <p class="text-xs font-medium uppercase tracking-wide text-slate-400">
-            Data format
+            Archive source
           </p>
           <p class="mt-1 font-medium text-slate-700">
-            {{ selectedPayload.dataFormat }}
+            {{ selectedPayload.source === 'isapi' ? 'Retained ISAPI history' : 'PushSDK delivery' }}
           </p>
         </div>
         <div>

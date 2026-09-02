@@ -26,6 +26,8 @@ type Store struct{ pool *pgxpool.Pool }
 
 const schemaBaselineMigration = "schema-baseline-2026-09-02"
 
+var ErrUnknownArchiveEventSource = errors.New("unknown event archive source")
+
 type migrationFile struct {
 	name     string
 	contents []byte
@@ -416,8 +418,9 @@ func (s *Store) DeletePushSDKSession(ctx context.Context, terminalSerial string)
 
 type DeviceEvent struct {
 	ID                   int64        `json:"id"`
+	Source               string       `json:"source"`
 	TerminalSerialNumber string       `json:"terminalSerialNumber"`
-	VendorEventID        string       `json:"vendorEventId"`
+	SourceRecordID       string       `json:"sourceRecordId"`
 	DataFormat           string       `json:"dataFormat"`
 	PayloadAvailable     bool         `json:"payloadAvailable"`
 	ReceivedAt           time.Time    `json:"receivedAt"`
@@ -472,10 +475,11 @@ type AccessEventSubtype struct {
 }
 
 type DeviceEventPayload struct {
-	ID            int64   `json:"id"`
-	VendorEventID string  `json:"vendorEventId"`
-	DataFormat    string  `json:"dataFormat"`
-	PayloadBase64 *string `json:"payloadBase64"`
+	ID             int64   `json:"id"`
+	Source         string  `json:"source"`
+	SourceRecordID string  `json:"sourceRecordId"`
+	DataFormat     string  `json:"dataFormat"`
+	PayloadBase64  *string `json:"payloadBase64"`
 }
 
 type NewDeviceEvent struct {
@@ -558,6 +562,7 @@ type DeviceEventQuery struct {
 	MajorEventType *int
 	SubEventType   *int
 	Terminal       string
+	Source         string
 }
 
 type Overview struct {
@@ -567,7 +572,7 @@ type Overview struct {
 
 func (s *Store) Overview(ctx context.Context) (Overview, error) {
 	var overview Overview
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM device_events`).Scan(&overview.DeviceEventTotal); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM device_events) + (SELECT count(*) FROM retained_access_events)`).Scan(&overview.DeviceEventTotal); err != nil {
 		return overview, err
 	}
 	states, err := s.TerminalStates(ctx)
@@ -584,26 +589,23 @@ func (s *Store) DeviceEvents(ctx context.Context, limit, offset int) (DeviceEven
 
 func (s *Store) QueryDeviceEvents(ctx context.Context, query DeviceEventQuery) (DeviceEventPage, error) {
 	var page DeviceEventPage
-	clauses, arguments := deviceEventClauses(query)
+	clauses, arguments := archiveEventClauses(query)
 	where := strings.Join(clauses, " AND ")
-	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM device_events de
-		LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
-		WHERE `+where, arguments...).Scan(&page.Total); err != nil {
+	if err := s.pool.QueryRow(ctx, archiveEventCTE+`SELECT count(*) FROM archive_events WHERE `+where, arguments...).Scan(&page.Total); err != nil {
 		return page, err
 	}
 	limitIndex := len(arguments) + 1
 	offsetIndex := len(arguments) + 2
 	arguments = append(arguments, query.Limit, query.Offset)
-	rows, err := s.pool.Query(ctx, `SELECT de.id, de.terminal_serial_number, de.vendor_event_id, de.data_format, de.payload_base64 IS NOT NULL, de.received_at,
-		ace.major_event_type, ace.sub_event_type, ace.event_description, ace.occurred_at, ace.employee_number, ace.employee_name,
-		ace.card_number, ace.card_reader_number, ace.door_number, ace.source_ip_address,
-		ace.event_state, ace.source_mac_address, ace.channel_id, ace.active_post_count,
-		ace.short_serial_number, ace.device_name, ace.event_serial_number, ace.front_serial_number,
-		ace.user_type, ace.current_verify_mode, ace.current_event, ace.mask, ace.pictures_number,
-		ace.pure_pwd_verify_enable, ace.face_rect_height, ace.face_rect_width, ace.face_rect_x, ace.face_rect_y
-		FROM device_events de
-		LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
-		WHERE `+where+` ORDER BY de.received_at DESC, de.id DESC LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex), arguments...)
+	rows, err := s.pool.Query(ctx, archiveEventCTE+`SELECT source, id, terminal_serial_number, source_record_id, data_format, payload_available, received_at,
+		major_event_type, sub_event_type, event_description, occurred_at, employee_number, employee_name,
+		card_number, card_reader_number, door_number, source_ip_address,
+		event_state, source_mac_address, channel_id, active_post_count,
+		short_serial_number, device_name, event_serial_number, front_serial_number,
+		user_type, current_verify_mode, current_event, mask, pictures_number,
+		pure_pwd_verify_enable, face_rect_height, face_rect_width, face_rect_x, face_rect_y
+		FROM archive_events
+		WHERE `+where+` ORDER BY received_at DESC, id DESC LIMIT $`+strconv.Itoa(limitIndex)+` OFFSET $`+strconv.Itoa(offsetIndex), arguments...)
 	if err != nil {
 		return page, err
 	}
@@ -614,7 +616,7 @@ func (s *Store) QueryDeviceEvents(ctx context.Context, query DeviceEventQuery) (
 		var access AccessEvent
 		var faceRect AccessEventFaceRect
 		var major, subtype *int
-		if err := rows.Scan(&event.ID, &event.TerminalSerialNumber, &event.VendorEventID, &event.DataFormat, &event.PayloadAvailable, &event.ReceivedAt,
+		if err := rows.Scan(&event.Source, &event.ID, &event.TerminalSerialNumber, &event.SourceRecordID, &event.DataFormat, &event.PayloadAvailable, &event.ReceivedAt,
 			&major, &subtype, &access.EventDescription, &access.OccurredAt, &access.EmployeeNumber, &access.EmployeeName,
 			&access.CardNumber, &access.CardReaderNumber, &access.DoorNumber, &access.SourceIPAddress,
 			&access.EventState, &access.SourceMACAddress, &access.ChannelID, &access.ActivePostCount,
@@ -642,20 +644,48 @@ func (s *Store) QueryDeviceEvents(ctx context.Context, query DeviceEventQuery) (
 	return page, err
 }
 
-func deviceEventClauses(query DeviceEventQuery) ([]string, []any) {
+const archiveEventCTE = `WITH archive_events AS (
+	SELECT 'pushsdk'::TEXT AS source, de.id, de.terminal_serial_number, de.vendor_event_id AS source_record_id,
+		de.data_format, (de.payload_base64 IS NOT NULL) AS payload_available, de.received_at,
+		ace.major_event_type, ace.sub_event_type, ace.event_description, ace.occurred_at,
+		ace.employee_number, ace.employee_name, ace.card_number, ace.card_reader_number, ace.door_number,
+		ace.source_ip_address, ace.event_state, ace.source_mac_address, ace.channel_id, ace.active_post_count,
+		ace.short_serial_number, ace.device_name, ace.event_serial_number, ace.front_serial_number,
+		ace.user_type, ace.current_verify_mode, ace.current_event, ace.mask, ace.pictures_number,
+		ace.pure_pwd_verify_enable, ace.face_rect_height, ace.face_rect_width, ace.face_rect_x, ace.face_rect_y
+	FROM device_events de
+	LEFT JOIN access_event_projections ace ON ace.device_event_id = de.id
+	UNION ALL
+	SELECT 'isapi'::TEXT AS source, retained.id, retained.terminal_serial_number, encode(retained.source_sha256, 'hex') AS source_record_id,
+		'jsonData'::TEXT AS data_format, TRUE AS payload_available, retained.imported_at,
+		retained.major_event_type, retained.sub_event_type, NULL::TEXT AS event_description, retained.occurred_at,
+		retained.employee_number, retained.employee_name, retained.card_number, retained.card_reader_number, retained.door_number,
+		NULL::TEXT AS source_ip_address, NULL::TEXT AS event_state, NULL::TEXT AS source_mac_address, NULL::INTEGER AS channel_id, NULL::INTEGER AS active_post_count,
+		NULL::TEXT AS short_serial_number, NULL::TEXT AS device_name, retained.event_serial_number, NULL::BIGINT AS front_serial_number,
+		retained.user_type, retained.current_verify_mode, NULL::BOOLEAN AS current_event, retained.mask, NULL::INTEGER AS pictures_number,
+		NULL::BOOLEAN AS pure_pwd_verify_enable, retained.face_rect_height, retained.face_rect_width, retained.face_rect_x, retained.face_rect_y
+	FROM retained_access_events retained
+)
+`
+
+func archiveEventClauses(query DeviceEventQuery) ([]string, []any) {
 	clauses := []string{"TRUE"}
 	arguments := []any{}
 	if query.MajorEventType != nil {
 		arguments = append(arguments, *query.MajorEventType)
-		clauses = append(clauses, "ace.classification_status = 'classified'", "ace.major_event_type = $"+strconv.Itoa(len(arguments)))
+		clauses = append(clauses, "major_event_type = $"+strconv.Itoa(len(arguments)))
 	}
 	if query.SubEventType != nil {
 		arguments = append(arguments, *query.SubEventType)
-		clauses = append(clauses, "ace.classification_status = 'classified'", "ace.sub_event_type = $"+strconv.Itoa(len(arguments)))
+		clauses = append(clauses, "sub_event_type = $"+strconv.Itoa(len(arguments)))
 	}
 	if query.Terminal != "" {
 		arguments = append(arguments, query.Terminal)
-		clauses = append(clauses, "de.terminal_serial_number = $"+strconv.Itoa(len(arguments)))
+		clauses = append(clauses, "terminal_serial_number = $"+strconv.Itoa(len(arguments)))
+	}
+	if query.Source != "" {
+		arguments = append(arguments, query.Source)
+		clauses = append(clauses, "source = $"+strconv.Itoa(len(arguments)))
 	}
 	return clauses, arguments
 }
@@ -665,13 +695,12 @@ func (s *Store) accessEventSubtypes(ctx context.Context, query DeviceEventQuery)
 		return []AccessEventSubtype{}, nil
 	}
 	query.SubEventType = nil
-	clauses, arguments := deviceEventClauses(query)
-	rows, err := s.pool.Query(ctx, `SELECT ace.sub_event_type
-		FROM device_events de
-		JOIN access_event_projections ace ON ace.device_event_id = de.id
+	clauses, arguments := archiveEventClauses(query)
+	rows, err := s.pool.Query(ctx, archiveEventCTE+`SELECT sub_event_type
+		FROM archive_events
 		WHERE `+strings.Join(clauses, " AND ")+`
-		GROUP BY ace.sub_event_type
-		ORDER BY ace.sub_event_type`, arguments...)
+		GROUP BY sub_event_type
+		ORDER BY sub_event_type`, arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -859,9 +888,22 @@ func (s *Store) BackfillAccessEventProjections(ctx context.Context) (int64, erro
 }
 
 func (s *Store) DeviceEventPayload(ctx context.Context, id int64) (DeviceEventPayload, bool, error) {
+	return s.ArchiveEventPayload(ctx, "pushsdk", id)
+}
+
+func (s *Store) ArchiveEventPayload(ctx context.Context, source string, id int64) (DeviceEventPayload, bool, error) {
 	var payload DeviceEventPayload
-	err := s.pool.QueryRow(ctx, `SELECT id, vendor_event_id, data_format, payload_base64
-		FROM device_events WHERE id = $1`, id).Scan(&payload.ID, &payload.VendorEventID, &payload.DataFormat, &payload.PayloadBase64)
+	var err error
+	switch source {
+	case "pushsdk":
+		err = s.pool.QueryRow(ctx, `SELECT id, 'pushsdk'::TEXT, vendor_event_id, data_format, payload_base64
+			FROM device_events WHERE id = $1`, id).Scan(&payload.ID, &payload.Source, &payload.SourceRecordID, &payload.DataFormat, &payload.PayloadBase64)
+	case "isapi":
+		err = s.pool.QueryRow(ctx, `SELECT id, 'isapi'::TEXT, encode(source_sha256, 'hex'), 'jsonData'::TEXT, encode(source_record, 'base64')
+			FROM retained_access_events WHERE id = $1`, id).Scan(&payload.ID, &payload.Source, &payload.SourceRecordID, &payload.DataFormat, &payload.PayloadBase64)
+	default:
+		return payload, false, fmt.Errorf("%w %q", ErrUnknownArchiveEventSource, source)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return payload, false, nil
 	}

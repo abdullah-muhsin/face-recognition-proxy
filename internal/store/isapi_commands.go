@@ -87,6 +87,32 @@ type ISAPICommandResult struct {
 }
 
 func (s *Store) QueueISAPICommand(ctx context.Context, input NewISAPICommand) (ISAPICommand, activity.Event, error) {
+	if input.CreatedBy.ID == 0 || input.CreatedBy.Username == "" {
+		return ISAPICommand{}, activity.Event{}, errors.New("ISAPI command administrator identity is required")
+	}
+	if !input.ExpiresAt.After(time.Now().UTC()) {
+		return ISAPICommand{}, activity.Event{}, errors.New("ISAPI command expiry must be in the future")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return ISAPICommand{}, activity.Event{}, fmt.Errorf("begin queue ISAPI command: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	command, stored, err := queueISAPICommandTx(ctx, tx, input)
+	if err != nil {
+		return ISAPICommand{}, activity.Event{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ISAPICommand{}, activity.Event{}, fmt.Errorf("commit queue ISAPI command: %w", err)
+	}
+	return command, stored, nil
+}
+
+// queueISAPICommandTx is the single durable command-queue primitive used by
+// both the generic administration API and dedicated gateway workflows. A
+// caller's surrounding transaction can therefore link a command to its own
+// state without a race between the command audit and that state.
+func queueISAPICommandTx(ctx context.Context, tx pgx.Tx, input NewISAPICommand) (ISAPICommand, activity.Event, error) {
 	var command ISAPICommand
 	if input.CreatedBy.ID == 0 || input.CreatedBy.Username == "" {
 		return command, activity.Event{}, errors.New("ISAPI command administrator identity is required")
@@ -94,18 +120,8 @@ func (s *Store) QueueISAPICommand(ctx context.Context, input NewISAPICommand) (I
 	if !input.ExpiresAt.After(time.Now().UTC()) {
 		return command, activity.Event{}, errors.New("ISAPI command expiry must be in the future")
 	}
-	uuid, err := newISAPICommandUUID()
-	if err != nil {
-		return command, activity.Event{}, err
-	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return command, activity.Event{}, fmt.Errorf("begin queue ISAPI command: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
 	var terminalStatus string
-	err = tx.QueryRow(ctx, `SELECT connection_status FROM terminals WHERE serial_number = $1 FOR KEY SHARE`, input.TerminalSerialNumber).Scan(&terminalStatus)
+	err := tx.QueryRow(ctx, `SELECT connection_status FROM terminals WHERE serial_number = $1 FOR KEY SHARE`, input.TerminalSerialNumber).Scan(&terminalStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command, activity.Event{}, ErrISAPICommandTerminalNotFound
 	}
@@ -115,7 +131,10 @@ func (s *Store) QueueISAPICommand(ctx context.Context, input NewISAPICommand) (I
 	if terminalStatus != "online" {
 		return command, activity.Event{}, ErrISAPICommandTerminalOffline
 	}
-
+	uuid, err := newISAPICommandUUID()
+	if err != nil {
+		return command, activity.Event{}, err
+	}
 	command = ISAPICommand{
 		UUID:                 uuid,
 		TerminalSerialNumber: input.TerminalSerialNumber,
@@ -144,9 +163,6 @@ func (s *Store) QueueISAPICommand(ctx context.Context, input NewISAPICommand) (I
 	})
 	if err != nil {
 		return ISAPICommand{}, activity.Event{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return ISAPICommand{}, activity.Event{}, fmt.Errorf("commit queue ISAPI command: %w", err)
 	}
 	return command, stored, nil
 }
@@ -285,6 +301,11 @@ func (s *Store) CompleteISAPICommands(ctx context.Context, terminalSerial string
 				return nil, false, err
 			}
 			activities = append(activities, stored)
+			syncActivities, err := completeAccessEventSyncCommand(ctx, tx, terminalSerial, result, completedAt)
+			if err != nil {
+				return nil, false, err
+			}
+			activities = append(activities, syncActivities...)
 		case "completed":
 			if result.DataFormat == nil {
 				if requestDataFormat != "noData" || responseFormat != nil || responseFormatDeclared == nil || *responseFormatDeclared || responseBase64 == nil || *responseBase64 != result.DataBase64 {

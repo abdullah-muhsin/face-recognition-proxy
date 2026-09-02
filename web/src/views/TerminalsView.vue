@@ -13,6 +13,13 @@ const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const filter = ref('')
+const syncRuns = ref({})
+const syncTimers = new Map()
+
+onBeforeUnmount(() => {
+  for (const timer of syncTimers.values()) window.clearTimeout(timer)
+  syncTimers.clear()
+})
 const displayedTerminals = computed(() =>
   gateway.overview.terminals.filter((terminal) =>
     matchesTerminal(terminal, filter.value),
@@ -33,6 +40,80 @@ async function refresh() {
     toast.add({
       severity: 'error',
       summary: 'Gateway request failed',
+      detail: error.message,
+      life: 5000,
+    })
+  }
+}
+
+function syncRunFor(terminal) {
+  return syncRuns.value[terminal.serialNumber]
+}
+
+function syncIsActive(terminal) {
+  const run = syncRunFor(terminal)
+  return run?.status === 'awaiting_time' || run?.status === 'running'
+}
+
+function syncSummary(terminal) {
+  const run = syncRunFor(terminal)
+  if (!run) return '—'
+  if (run.status === 'awaiting_time') return 'Waiting for terminal time'
+  if (run.status === 'running') {
+    const total = run.totalMatches ?? '…'
+    return `${run.pagesCompleted} pages · ${run.recordsImported + run.recordsDuplicate}/${total}`
+  }
+  if (run.status === 'completed') {
+    return `${run.recordsImported} imported · ${run.recordsDuplicate} already retained`
+  }
+  return run.failure || 'Stopped'
+}
+
+function trackSync(run) {
+  syncRuns.value = { ...syncRuns.value, [run.terminalSerialNumber]: run }
+  if (run.status !== 'awaiting_time' && run.status !== 'running') return
+  const prior = syncTimers.get(run.terminalSerialNumber)
+  if (prior) window.clearTimeout(prior)
+  syncTimers.set(
+    run.terminalSerialNumber,
+    window.setTimeout(async () => {
+      try {
+        trackSync(await gateway.loadAccessEventSync(run.uuid))
+        await gateway.loadDeviceEvents()
+      } catch (error) {
+        if (isAuthenticationError(error)) {
+          await router.replace({ name: 'login', query: { redirect: route.fullPath } })
+          return
+        }
+        toast.add({
+          severity: 'error',
+          summary: 'Could not update event sync',
+          detail: error.message,
+          life: 5000,
+        })
+      }
+    }, 1500),
+  )
+}
+
+async function syncRetainedEvents(terminal) {
+  try {
+    const run = await gateway.queueAccessEventSync(terminal.serialNumber)
+    trackSync(run)
+    toast.add({
+      severity: 'info',
+      summary: 'Retained event sync queued',
+      detail: 'The gateway will use the terminal’s own clock and page its retained archive through PushSDK.',
+      life: 5000,
+    })
+  } catch (error) {
+    if (isAuthenticationError(error)) {
+      await router.replace({ name: 'login', query: { redirect: route.fullPath } })
+      return
+    }
+    toast.add({
+      severity: 'error',
+      summary: 'Could not queue retained event sync',
       detail: error.message,
       life: 5000,
     })
@@ -139,6 +220,30 @@ async function refresh() {
             :class="data.lastError ? 'text-red-700' : 'text-slate-400'"
             >{{ data.lastError || '—' }}</code
           >
+        </template>
+      </Column>
+      <Column header="Retained history">
+        <template #body="{ data }">
+          <p
+            class="max-w-64 text-xs"
+            :class="syncRunFor(data)?.status === 'failed' ? 'text-red-700' : 'text-slate-600'"
+          >
+            {{ syncSummary(data) }}
+          </p>
+        </template>
+      </Column>
+      <Column header="Actions" frozen align-frozen="right">
+        <template #body="{ data }">
+          <Button
+            :label="syncIsActive(data) ? 'Syncing' : 'Sync retained events'"
+            icon="pi pi-history"
+            size="small"
+            outlined
+            :loading="syncIsActive(data)"
+            :disabled="data.status !== 'online' || syncIsActive(data)"
+            :title="data.status === 'online' ? 'Read the complete retained access-event archive through this terminal’s PushSDK session.' : 'The terminal must be online before a retained-event sync can be queued.'"
+            @click="syncRetainedEvents(data)"
+          />
         </template>
       </Column>
     </DataTable>

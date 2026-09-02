@@ -48,6 +48,8 @@ func TestCanonicalSchemaIsCreateOnlyAndContainsFinalCommandState(t *testing.T) {
 		"CREATE TABLE isapi_commands",
 		"response_data_format_declared BOOLEAN",
 		"isapi_commands_response_state_check",
+		"CREATE TABLE access_event_sync_runs",
+		"CREATE TABLE retained_access_events",
 	} {
 		if !strings.Contains(schema, definition) {
 			t.Fatalf("canonical schema lacks %q", definition)

@@ -11,6 +11,7 @@ Vue 3/Vite (JavaScript), Tailwind CSS, PrimeVue, WebSockets, and Prometheus.
 | `/app/` | Administrators | Vue administration console |
 | `/api/v1/...` | Vue console | Same-origin authenticated administration API |
 | `/api/v1/admin/terminals/{serial}/isapi-commands` | Administrators and approved gateway clients | Queue an exact ISAPI command for one online PushSDK terminal |
+| `/api/v1/admin/terminals/{serial}/retained-event-syncs` | Administrators | Reconcile one online terminal's retained access-event archive through PushSDK |
 | `/ws/v1/monitor` | Vue administration console | Authenticated replay and live stream of retained operational metadata |
 | `/metrics` | Prometheus only | Private metric endpoint |
 | `/healthz`, `/readyz` | Infrastructure | Liveness and database readiness |
@@ -65,6 +66,14 @@ as well. They are retained only in PostgreSQL's command audit and returned only
 by the signed-in administration API; gateway activity and its live monitor
 contain command metadata only, never command payloads or results.
 
+Retained ISAPI access-event records are a separate archive source. A device's
+`AcsEvent.InfoList` records do not carry the PushSDK event UUID used by live
+delivery, so the gateway never presents them as live retries. It retains each
+exact record JSON segment with a SHA-256 source fingerprint scoped to the
+terminal. A subsequent identical search result is counted as already retained;
+a changed source record is a distinct retained record. The full source page
+remains in the related ISAPI command audit as well.
+
 The PushSDK session checkpoint contains only the negotiated payload mode,
 server-issued salt and challenges, iteration count, timestamps, and a hash of
 the exact terminal protocol configuration. It never contains a terminal
@@ -116,6 +125,17 @@ This gateway intentionally accepts only the documented protocol forms:
   exact absolute `/ISAPI/` path. The gateway does not open direct connections
   to terminals, infer an omitted data format, rewrite paths or payloads, or
   retain an unbounded command for later delivery.
+- Terminal Registry can queue one retained-event reconciliation for an online
+  terminal. The workflow first sends `GET /ISAPI/System/time` and accepts only
+  the documented `Time.localTime` XML response. It then uses that terminal time
+  to create the exact all-category `POST /ISAPI/AccessControl/AcsEvent?format=json`
+  request: `major: 0`, `minor: 0`, 30 records per vendor-supported page, from
+  `2000-01-01` through the device's reported current time. Every next page is
+  queued only after the preceding command result, response status, position,
+  count, search ID, and total are validated. `MORE`, `OK`, and `NO MATCH` are
+  distinct documented states; an inconsistent or unsupported response ends the
+  run with a durable failure instead of filling gaps or retrying under altered
+  conditions.
 - Events use an exact JSON envelope, base64 data, unique vendor UUIDs, and one
   of `jsonData`, `xmlData`, `boundaryData`, or empty `noData`.
 - The source `eventList.data` base64 string is persisted verbatim for every
@@ -175,6 +195,22 @@ the terminal's exact response Base64 value together with whether it declared a
 response format. All three endpoints use the existing signed-in administrator
 session, so no terminal credential or separate device-facing authorization is
 exposed to the caller.
+
+## Retained-event reconciliation API
+
+`POST /api/v1/admin/terminals/{serial}/retained-event-syncs` has no request
+body or query parameters. It returns `201` with the durable run state and
+queues the initial terminal-time command only when the terminal is currently
+online. There can be one active reconciliation per terminal; a second request
+returns `409` rather than competing for the device archive.
+
+`GET /api/v1/admin/retained-event-syncs/{uuid}` returns that run's exact
+lifecycle state, device-time bounds, page count, total matches, imported count,
+duplicate count, and any terminal-response failure. Event Archive presents live
+PushSDK deliveries and retained ISAPI records together, with an explicit source
+selector and source-specific payload endpoint. The payload route is
+`GET /api/v1/admin/events/{source}/{id}/payload`, where `source` is exactly
+`pushsdk` or `isapi`; retained payloads are the exact `InfoList` record bytes.
 
 ## Local run
 

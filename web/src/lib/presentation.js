@@ -57,7 +57,12 @@ export function formatShortTime(value) {
 export function matchesDeviceEvent(event, query) {
   const term = query.trim().toLocaleLowerCase()
   if (!term) return true
-  return [event.vendorEventId, event.terminalSerialNumber, event.dataFormat]
+  return [
+    event.sourceRecordId,
+    event.terminalSerialNumber,
+    event.dataFormat,
+    event.source,
+  ]
     .filter(Boolean)
     .join(' ')
     .toLocaleLowerCase()
