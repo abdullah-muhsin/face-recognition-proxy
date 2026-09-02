@@ -17,7 +17,7 @@ RUN useradd --system --uid 10001 --create-home --home-dir /app gateway
 WORKDIR /app
 COPY --from=go-build /out/pushsdk-gateway /app/pushsdk-gateway
 COPY --from=web-build /build/web/dist /app/web
-COPY db/migrations /app/migrations
+COPY db /app/db
 USER gateway
 EXPOSE 8080
 ENTRYPOINT ["/app/pushsdk-gateway"]

@@ -42,6 +42,22 @@ it is never broadcast through the monitor or emitted in logs. An event payload
 can contain sensitive vendor data, including binary media, so administrator
 credentials control access to it.
 
+## Database bootstrap and terminal seeding
+
+`db/schema.sql` is the canonical, create-only PostgreSQL schema. An empty
+database installs it as one baseline and then receives only later forward
+migrations. The historical migration chain remains immutable under
+`db/migrations/legacy/` so an existing deployment can verify its checksums and
+complete an interrupted pre-baseline upgrade safely.
+
+After schema setup, the gateway runs `SeedConfiguredTerminals` from the
+protected `terminals.json` inventory. It upserts each configured terminal's
+canonical serial, PushSDK ID, protocol settings, and credential fingerprint;
+it never stores the terminal password. The seed intentionally starts each
+configured terminal offline until that terminal proves an authenticated
+PushSDK session. See the [DS-K1T342MFWX-E1 terminal record](docs/devices/hikvision-ds-k1t342mfwx-e1.md)
+for the current device's identifiers and the matching non-secret seed template.
+
 ISAPI command request bytes and command-result source values can be sensitive
 as well. They are retained only in PostgreSQL's command audit and returned only
 by the signed-in administration API; gateway activity and its live monitor

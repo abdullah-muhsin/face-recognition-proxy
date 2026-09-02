@@ -17,6 +17,13 @@ match the terminal's negotiated capability; this gateway does not downgrade.
 exact firmware (`sha256` or `sha1`). It is not inferred from a failed login;
 the previous `digest` mapping key is not accepted.
 
+On startup the gateway runs `SeedConfiguredTerminals`, which upserts this
+mapping before the terminal can authenticate. It records only the terminal
+identity, PushSDK protocol settings, and a credential fingerprint; the password
+remains in the protected environment file. For the installed device, use the
+[DS-K1T342MFWX-E1 terminal record](devices/hikvision-ds-k1t342mfwx-e1.md) as
+the source of exact non-secret identifiers.
+
 Use HTTPS server `vps.itplus.club`, HTTPS port `443`, and WebSocket port `443`
 only after Nginx routes to the new loopback gateway. The terminal must show
 online registration before continuing.

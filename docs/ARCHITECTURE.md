@@ -28,10 +28,11 @@ denied at Nginx and additionally CIDR-checked by Go.
 - `internal/accesscontrol`: versioned, declared JSON `AccessControllerEvent`
   projection. It recognizes only the documented event identity and category
   codes; every other raw event remains unclassified.
-- `internal/store`: PostgreSQL migrations, terminal state, exact raw device
-  event source values, the one-to-one access-event projection, gateway activity
-  history, PushSDK session checkpoints, administrator users, and hashed
-  administrator sessions.
+- `internal/store`: canonical database bootstrap, immutable legacy and forward
+  migration handling, declarative terminal seeding, terminal state, exact raw
+  device-event source values, the one-to-one access-event projection, gateway
+  activity history, PushSDK session checkpoints, administrator users, and
+  hashed administrator sessions.
 - `internal/httpapi`: session-authenticated API, static console delivery,
   origin-checked WebSocket, private metrics, and health endpoints.
 - `internal/monitor`: in-memory fan-out of activity records that have already
@@ -65,5 +66,6 @@ receives that exact part's bytes; no image is detected, derived, resized, or
 stored separately.
 
 Adding a new terminal capability is a schema and protocol change: document the
-vendor wire form, add a migration and tests, then release it. Do not add a
-best-effort parser branch for an observed malformed frame.
+vendor wire form, add one immutable forward migration and tests, update the
+canonical `db/schema.sql`, then release it. Do not add a best-effort parser
+branch for an observed malformed frame.

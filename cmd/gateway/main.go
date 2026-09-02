@@ -50,7 +50,7 @@ func run(logger *slog.Logger) error {
 	if backfilled > 0 {
 		logger.Info("backfilled access-event projections", "records", backfilled)
 	}
-	if err := data.SynchronizeConfiguredTerminals(ctx, cfg.Terminals); err != nil {
+	if err := data.SeedConfiguredTerminals(ctx, cfg.Terminals); err != nil {
 		return err
 	}
 	if err := data.ReconcileConfiguredAdministrator(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {

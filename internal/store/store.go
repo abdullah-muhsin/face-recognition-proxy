@@ -24,6 +24,14 @@ import (
 
 type Store struct{ pool *pgxpool.Pool }
 
+const schemaBaselineMigration = "schema-baseline-2026-09-02"
+
+type migrationFile struct {
+	name     string
+	contents []byte
+	checksum string
+}
+
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -39,9 +47,95 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 func (s *Store) Close() { s.pool.Close() }
 
 func (s *Store) Migrate(ctx context.Context, directory string) error {
+	canonicalSchema, err := os.ReadFile(filepath.Join(filepath.Dir(directory), "schema.sql"))
+	if err != nil {
+		return fmt.Errorf("read canonical schema: %w", err)
+	}
+	legacyFiles, err := loadMigrationFiles(filepath.Join(directory, "legacy"))
+	if err != nil {
+		return err
+	}
+	forwardFiles, err := loadMigrationFiles(directory)
+	if err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+        name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+		return fmt.Errorf("create migration registry: %w", err)
+	}
+	baselineApplied, err := s.ensureCanonicalSchema(ctx, canonicalSchema, forwardFiles)
+	if err != nil {
+		return err
+	}
+	if !baselineApplied {
+		if err := s.applyMigrationFiles(ctx, legacyFiles); err != nil {
+			return err
+		}
+	}
+	if err := s.applyMigrationFiles(ctx, forwardFiles); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureCanonicalSchema installs the final CREATE-only schema for an empty
+// database. A database with pre-baseline migration records keeps its immutable
+// incremental history and is upgraded through db/migrations/legacy instead.
+func (s *Store) ensureCanonicalSchema(ctx context.Context, schema []byte, forwardFiles []migrationFile) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("begin canonical schema check: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var recorded string
+	err = tx.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE name = $1`, schemaBaselineMigration).Scan(&recorded)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("check canonical schema baseline: %w", err)
+	}
+
+	var migrationCount int64
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+		return false, fmt.Errorf("count recorded migrations: %w", err)
+	}
+	if migrationCount != 0 {
+		return false, nil
+	}
+
+	var terminalsExist bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('public.terminals') IS NOT NULL`).Scan(&terminalsExist); err != nil {
+		return false, fmt.Errorf("check for an unregistered schema: %w", err)
+	}
+	if terminalsExist {
+		return false, errors.New("database has terminal tables but no recorded migration history")
+	}
+
+	sum := sha256.Sum256(schema)
+	checksum := hex.EncodeToString(sum[:])
+	if _, err := tx.Exec(ctx, string(schema)); err != nil {
+		return false, fmt.Errorf("create canonical schema: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`, schemaBaselineMigration, checksum); err != nil {
+		return false, fmt.Errorf("record canonical schema baseline: %w", err)
+	}
+	for _, migration := range forwardFiles {
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`, migration.name, migration.checksum); err != nil {
+			return false, fmt.Errorf("record canonical schema forward migration %s: %w", migration.name, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit canonical schema baseline: %w", err)
+	}
+	return true, nil
+}
+
+func migrationFiles(directory string) ([]string, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return fmt.Errorf("read migrations directory: %w", err)
+		return nil, fmt.Errorf("read migrations directory %s: %w", directory, err)
 	}
 	files := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -50,56 +144,64 @@ func (s *Store) Migrate(ctx context.Context, directory string) error {
 		}
 	}
 	sort.Strings(files)
-	if len(files) == 0 {
-		return fmt.Errorf("no SQL migrations in %s", directory)
+	return files, nil
+}
+
+func loadMigrationFiles(directory string) ([]migrationFile, error) {
+	names, err := migrationFiles(directory)
+	if err != nil {
+		return nil, err
 	}
-	if _, err := s.pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-        name TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
-		return fmt.Errorf("create migration registry: %w", err)
-	}
-	for _, name := range files {
+	files := make([]migrationFile, 0, len(names))
+	for _, name := range names {
 		contents, err := os.ReadFile(filepath.Join(directory, name))
 		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
+			return nil, fmt.Errorf("read migration %s: %w", name, err)
 		}
 		sum := sha256.Sum256(contents)
-		checksum := hex.EncodeToString(sum[:])
+		files = append(files, migrationFile{name: name, contents: contents, checksum: hex.EncodeToString(sum[:])})
+	}
+	return files, nil
+}
+
+func (s *Store) applyMigrationFiles(ctx context.Context, files []migrationFile) error {
+	for _, migration := range files {
 		var recorded string
-		err = s.pool.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE name = $1`, name).Scan(&recorded)
+		err := s.pool.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE name = $1`, migration.name).Scan(&recorded)
 		if err == nil {
-			if recorded != checksum {
-				return fmt.Errorf("migration %s has changed after application", name)
+			if recorded != migration.checksum {
+				return fmt.Errorf("migration %s has changed after application", migration.name)
 			}
 			continue
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("check migration %s: %w", name, err)
+			return fmt.Errorf("check migration %s: %w", migration.name, err)
 		}
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
-			return fmt.Errorf("begin migration %s: %w", name, err)
+			return fmt.Errorf("begin migration %s: %w", migration.name, err)
 		}
-		if _, err = tx.Exec(ctx, string(contents)); err == nil {
-			_, err = tx.Exec(ctx, `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`, name, checksum)
+		if _, err = tx.Exec(ctx, string(migration.contents)); err == nil {
+			_, err = tx.Exec(ctx, `INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)`, migration.name, migration.checksum)
 		}
 		if err != nil {
 			_ = tx.Rollback(ctx)
-			return fmt.Errorf("apply migration %s: %w", name, err)
+			return fmt.Errorf("apply migration %s: %w", migration.name, err)
 		}
 		if err = tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit migration %s: %w", name, err)
+			return fmt.Errorf("commit migration %s: %w", migration.name, err)
 		}
 	}
 	return nil
 }
 
-// SynchronizeConfiguredTerminals upserts every deployed terminal mapping. A
+// SeedConfiguredTerminals upserts every deployed terminal mapping. A
 // process restart cannot prove that a terminal is still reachable, so every
 // configured terminal starts offline until its next valid PushSDK request
 // confirms a restored session or completes a fresh authentication exchange.
 // Historical terminal rows are intentionally retained because device events
 // reference their canonical serial numbers.
-func (s *Store) SynchronizeConfiguredTerminals(ctx context.Context, terminals []config.Terminal) error {
+func (s *Store) SeedConfiguredTerminals(ctx context.Context, terminals []config.Terminal) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

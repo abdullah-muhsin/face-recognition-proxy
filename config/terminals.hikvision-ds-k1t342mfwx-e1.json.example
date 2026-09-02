@@ -1,0 +1,12 @@
+[
+  {
+    "serialNumber": "DS-K1T342MFWX-E120260629V044840ENGN0953967",
+    "pushSdkSerial": "GN0953967",
+    "username": "REPLACE_WITH_THE_CONFIGURED_PUSHSDK_USERNAME",
+    "passwordEnvironmentVariable": "PUSHSDK_TERMINAL_PASSWORD",
+    "loginPasswordDigest": "sha256",
+    "securityVersion": 4,
+    "commandIntervalSeconds": 5,
+    "errorDelaySeconds": 30
+  }
+]
