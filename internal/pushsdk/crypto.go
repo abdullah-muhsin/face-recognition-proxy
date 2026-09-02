@@ -18,7 +18,11 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-var hex32 = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+var (
+	hex32          = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+	alphaNumeric64 = regexp.MustCompile(`^[0-9A-Za-z]{64}$`)
+	lowerHex64     = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
 
 func randomAlphaNumeric(length int) (string, error) {
 	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"

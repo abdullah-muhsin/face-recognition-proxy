@@ -1,23 +1,27 @@
 package pushsdk
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/itplus/pushsdk-gateway/internal/config"
+	"github.com/itplus/pushsdk-gateway/internal/store"
 )
 
 type Session struct {
-	Terminal       config.Terminal
-	Salt           string
-	LoginChallenge string
-	NextChallenge  string
-	Iterations     int
-	PayloadMode    PayloadMode
-	CreatedAt      time.Time
-	Authenticated  bool
-	mu             sync.Mutex
+	Terminal        config.Terminal
+	Salt            string
+	LoginChallenge  string
+	NextChallenge   string
+	Iterations      int
+	PayloadMode     PayloadMode
+	CreatedAt       time.Time
+	NextChallengeAt time.Time
+	Authenticated   bool
+	Restored        bool
+	mu              sync.Mutex
 }
 
 // PayloadMode is negotiated once by AuthInfo and applies to every subsequent
@@ -40,6 +44,7 @@ func NewSessions() *Sessions { return &Sessions{entries: make(map[string]*Sessio
 
 type SessionStart struct {
 	Session                      *Session
+	Previous                     *Session
 	ReplacedAuthenticatedSession bool
 }
 
@@ -67,7 +72,7 @@ func (s *Sessions) Start(terminal config.Terminal, mode PayloadMode) (SessionSta
 		wasAuthenticated = previous.Authenticated
 		previous.mu.Unlock()
 	}
-	return SessionStart{Session: session, ReplacedAuthenticatedSession: wasAuthenticated}, nil
+	return SessionStart{Session: session, Previous: previous, ReplacedAuthenticatedSession: wasAuthenticated}, nil
 }
 
 func (s *Sessions) Get(pushSDKSerial string) (*Session, bool) {
@@ -83,8 +88,69 @@ func (s *Sessions) Remove(pushSDKSerial string) {
 	s.mu.Unlock()
 }
 
+func (s *Sessions) Replace(pushSDKSerial string, session *Session) {
+	s.mu.Lock()
+	if session == nil {
+		delete(s.entries, pushSDKSerial)
+	} else {
+		s.entries[pushSDKSerial] = session
+	}
+	s.mu.Unlock()
+}
+
+// Restore loads only still-valid, configuration-matched session state. It is
+// sufficient to verify the next device request after a process restart, but it
+// never recreates a session after the vendor's challenge-validity window.
+func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data *store.Store, now time.Time) (int, error) {
+	storedSessions, err := data.PushSDKSessions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	restored := 0
+	for _, stored := range storedSessions {
+		terminal, found := cfg.TerminalBySerialNumber(stored.TerminalSerialNumber)
+		if !found || stored.ConfigurationFingerprint != terminal.SessionFingerprint() || !validStoredSession(stored) {
+			if err := data.DeletePushSDKSession(ctx, stored.TerminalSerialNumber); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		session := &Session{
+			Terminal:       terminal,
+			Salt:           stored.Salt,
+			LoginChallenge: stored.LoginChallenge,
+			NextChallenge:  stored.NextChallenge,
+			Iterations:     stored.Iterations,
+			PayloadMode:    PayloadMode(stored.PayloadMode),
+			CreatedAt:      stored.CreatedAt,
+			Authenticated:  stored.Authenticated,
+			Restored:       stored.Authenticated,
+		}
+		if stored.NextChallengeAt != nil {
+			session.NextChallengeAt = *stored.NextChallengeAt
+		}
+		if (!session.Authenticated && session.LoginChallengeExpired(now)) || (session.Authenticated && session.NextChallengeExpired(now)) {
+			if err := data.DeletePushSDKSession(ctx, stored.TerminalSerialNumber); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		s.mu.Lock()
+		s.entries[terminal.PushSDKSerial] = session
+		s.mu.Unlock()
+		if session.Authenticated {
+			restored++
+		}
+	}
+	return restored, nil
+}
+
 func (s *Session) LoginChallengeExpired(now time.Time) bool {
-	return now.After(s.CreatedAt.Add(time.Duration(s.Terminal.CommandIntervalSeconds*3) * time.Second))
+	return !now.Before(s.CreatedAt.Add(time.Duration(s.Terminal.CommandIntervalSeconds*3) * time.Second))
+}
+
+func (s *Session) NextChallengeExpired(now time.Time) bool {
+	return s.NextChallengeAt.IsZero() || !now.Before(s.NextChallengeAt.Add(time.Duration(s.Terminal.CommandIntervalSeconds*3)*time.Second))
 }
 
 func (s *Session) IssueNextChallenge() (string, error) {
@@ -93,5 +159,35 @@ func (s *Session) IssueNextChallenge() (string, error) {
 		return "", err
 	}
 	s.NextChallenge = challenge
+	s.NextChallengeAt = time.Now().UTC()
 	return challenge, nil
+}
+
+func (s *Session) PersistentState() store.PushSDKSession {
+	state := store.PushSDKSession{
+		TerminalSerialNumber:     s.Terminal.SerialNumber,
+		ConfigurationFingerprint: s.Terminal.SessionFingerprint(),
+		PayloadMode:              string(s.PayloadMode),
+		Salt:                     s.Salt,
+		LoginChallenge:           s.LoginChallenge,
+		NextChallenge:            s.NextChallenge,
+		Iterations:               s.Iterations,
+		CreatedAt:                s.CreatedAt,
+		Authenticated:            s.Authenticated,
+	}
+	if !s.NextChallengeAt.IsZero() {
+		nextChallengeAt := s.NextChallengeAt
+		state.NextChallengeAt = &nextChallengeAt
+	}
+	return state
+}
+
+func validStoredSession(session store.PushSDKSession) bool {
+	if !lowerHex64.MatchString(session.ConfigurationFingerprint) || (session.PayloadMode != string(PlaintextPayload) && session.PayloadMode != string(EncryptedPayload)) || !alphaNumeric64.MatchString(session.Salt) || !alphaNumeric64.MatchString(session.LoginChallenge) || session.Iterations != keyDerivationIterations {
+		return false
+	}
+	if !session.Authenticated {
+		return session.NextChallenge == "" && session.NextChallengeAt == nil
+	}
+	return lowerHex64.MatchString(session.NextChallenge) && session.NextChallengeAt != nil
 }

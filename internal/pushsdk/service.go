@@ -34,6 +34,45 @@ func NewService(cfg config.Config, data *store.Store, hub *monitor.Hub, metrics 
 	return &Service{config: cfg, sessions: NewSessions(), store: data, hub: hub, metrics: metrics, logger: logger}
 }
 
+func (s *Service) RestoreSessions(ctx context.Context) error {
+	restored, err := s.sessions.Restore(ctx, s.config, s.store, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	s.metrics.SessionsActive.Set(float64(restored))
+	return nil
+}
+
+func (s *Service) persistSession(ctx context.Context, session *Session) error {
+	return s.store.UpsertPushSDKSession(ctx, session.PersistentState())
+}
+
+func (s *Service) removeSession(ctx context.Context, terminal config.Terminal) error {
+	if err := s.store.DeletePushSDKSession(ctx, terminal.SerialNumber); err != nil {
+		return err
+	}
+	s.sessions.Remove(terminal.PushSDKSerial)
+	return nil
+}
+
+func (s *Service) restoreReplacedSession(ctx context.Context, terminal config.Terminal, previous *Session) error {
+	if previous == nil {
+		if err := s.store.DeletePushSDKSession(ctx, terminal.SerialNumber); err != nil {
+			return err
+		}
+		s.sessions.Replace(terminal.PushSDKSerial, nil)
+		return nil
+	}
+	previous.mu.Lock()
+	state := previous.PersistentState()
+	previous.mu.Unlock()
+	if err := s.store.UpsertPushSDKSession(ctx, state); err != nil {
+		return err
+	}
+	s.sessions.Replace(terminal.PushSDKSerial, previous)
+	return nil
+}
+
 func (s *Service) recordGatewayActivity(ctx context.Context, event activity.Event) error {
 	stored, err := s.store.RecordGatewayActivity(ctx, event)
 	if err != nil {
@@ -162,6 +201,10 @@ func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body [
 		return protocolResponse{}, fmt.Errorf("create AuthInfo session: %w", err)
 	}
 	session := started.Session
+	if err := s.persistSession(ctx, session); err != nil {
+		s.sessions.Replace(terminal.PushSDKSerial, started.Previous)
+		return protocolResponse{}, err
+	}
 	storedActivity, err := s.store.TransitionTerminalState(
 		ctx,
 		terminal.SerialNumber,
@@ -175,9 +218,8 @@ func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body [
 		},
 	)
 	if err != nil {
-		s.sessions.Remove(terminal.PushSDKSerial)
-		if started.ReplacedAuthenticatedSession {
-			s.metrics.SessionsActive.Dec()
+		if restoreErr := s.restoreReplacedSession(ctx, terminal, started.Previous); restoreErr != nil {
+			s.logger.Error("restore replaced PushSDK session after failed AuthInfo transition", "terminal", terminal.SerialNumber, "error", restoreErr)
 		}
 		return protocolResponse{}, err
 	}
@@ -245,7 +287,9 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if session.LoginChallengeExpired(time.Now().UTC()) {
-		s.sessions.Remove(terminal.PushSDKSerial)
+		if err := s.removeSession(ctx, terminal); err != nil {
+			return protocolResponse{}, nil, err
+		}
 		return protocolResponse{}, nil, invalidSession()
 	}
 	body, params, err := payloadForSession(request, terminal, session, "Login", requestBody, true)
@@ -260,11 +304,19 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		return protocolResponse{}, nil, &ProtocolError{Status: http.StatusUnauthorized, Message: "Login credentials are invalid"}
 	}
 	previousChallenge := session.NextChallenge
+	previousChallengeAt := session.NextChallengeAt
+	previousAuthenticated := session.Authenticated
 	next, err := session.IssueNextChallenge()
 	if err != nil {
 		return protocolResponse{}, nil, err
 	}
 	session.Authenticated = true
+	if err := s.persistSession(ctx, session); err != nil {
+		session.NextChallenge = previousChallenge
+		session.NextChallengeAt = previousChallengeAt
+		session.Authenticated = previousAuthenticated
+		return protocolResponse{}, nil, err
+	}
 	storedActivity, err := s.store.TransitionTerminalState(
 		ctx,
 		terminal.SerialNumber,
@@ -278,8 +330,12 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		},
 	)
 	if err != nil {
-		session.Authenticated = false
 		session.NextChallenge = previousChallenge
+		session.NextChallengeAt = previousChallengeAt
+		session.Authenticated = previousAuthenticated
+		if restoreErr := s.persistSession(ctx, session); restoreErr != nil {
+			s.logger.Error("restore PushSDK session after failed login transition", "terminal", terminal.SerialNumber, "error", restoreErr)
+		}
 		return protocolResponse{}, nil, err
 	}
 	s.metrics.SessionsActive.Inc()
@@ -315,8 +371,32 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 	if !session.Authenticated {
 		return protocolResponse{}, nil, invalidSession()
 	}
+	if session.NextChallengeExpired(time.Now().UTC()) {
+		if err := s.removeSession(ctx, terminal); err != nil {
+			return protocolResponse{}, nil, err
+		}
+		return protocolResponse{}, nil, invalidSession()
+	}
 	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.NextChallenge)) {
 		return protocolResponse{}, nil, invalidSession()
+	}
+	if session.Restored {
+		storedActivity, err := s.store.TransitionTerminalState(
+			ctx,
+			terminal.SerialNumber,
+			"online",
+			nil,
+			activity.Event{
+				Kind:     activity.KindPushSDKSessionResumed,
+				Terminal: terminal.SerialNumber,
+				Message:  "terminal resumed its persisted PushSDK session",
+			},
+		)
+		if err != nil {
+			return protocolResponse{}, nil, err
+		}
+		session.Restored = false
+		s.hub.Publish(storedActivity)
 	}
 	requiresBody := action == "CommandResult" || action == "Event"
 	body, params, err := payloadForSession(request, terminal, session, action, requestBody, requiresBody)
@@ -366,8 +446,19 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 		s.hub.Publish(storedActivity)
 		result = protocolResponse{Body: succeeded()}
 	}
+	previousChallenge := session.NextChallenge
+	previousChallengeAt := session.NextChallengeAt
 	next, err := session.IssueNextChallenge()
 	if err != nil {
+		return protocolResponse{}, nil, err
+	}
+	if action == "Logout" {
+		if err := s.removeSession(ctx, terminal); err != nil {
+			return protocolResponse{}, nil, err
+		}
+	} else if err := s.persistSession(ctx, session); err != nil {
+		session.NextChallenge = previousChallenge
+		session.NextChallengeAt = previousChallengeAt
 		return protocolResponse{}, nil, err
 	}
 	result.Challenge = next

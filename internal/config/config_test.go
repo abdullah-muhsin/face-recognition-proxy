@@ -85,6 +85,37 @@ func TestLoadPreservesConfiguredCredentialBytes(t *testing.T) {
 	}
 }
 
+func TestSessionFingerprintChangesWithEveryPushSDKContractSetting(t *testing.T) {
+	base := Terminal{
+		SerialNumber:           "DEVICE-1",
+		PushSDKSerial:          "PUSH-1",
+		Username:               "gateway",
+		Password:               "terminal-password",
+		LoginPasswordDigest:    "sha256",
+		SecurityVersion:        4,
+		CommandIntervalSeconds: 5,
+		ErrorDelaySeconds:      30,
+	}
+	baseline := base.SessionFingerprint()
+	for name, mutate := range map[string]func(*Terminal){
+		"push SDK serial":       func(terminal *Terminal) { terminal.PushSDKSerial = "PUSH-2" },
+		"username":              func(terminal *Terminal) { terminal.Username = "other" },
+		"password":              func(terminal *Terminal) { terminal.Password = "other-password" },
+		"login password digest": func(terminal *Terminal) { terminal.LoginPasswordDigest = "sha1" },
+		"security version":      func(terminal *Terminal) { terminal.SecurityVersion = 3 },
+		"command interval":      func(terminal *Terminal) { terminal.CommandIntervalSeconds = 10 },
+		"error delay":           func(terminal *Terminal) { terminal.ErrorDelaySeconds = 45 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := base
+			mutate(&mutated)
+			if mutated.SessionFingerprint() == baseline {
+				t.Fatal("configuration change did not invalidate persisted session state")
+			}
+		})
+	}
+}
+
 func setRequiredEnvironment(t *testing.T, terminalsFile string) {
 	t.Helper()
 	t.Setenv("GATEWAY_LISTEN_ADDRESS", ":8080")

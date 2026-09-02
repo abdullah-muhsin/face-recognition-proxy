@@ -22,11 +22,12 @@ denied at Nginx and additionally CIDR-checked by Go.
 ## Modules
 
 - `internal/pushsdk`: wire protocol, explicit plaintext/encrypted session mode,
-  configured PBKDF2 digest, challenge lifecycle, AES-CBC encryption, exact
-  event validation, and action-specific acknowledgement generation.
+  configured PBKDF2 digest, durably checkpointed challenge lifecycle, AES-CBC
+  encryption, exact event validation, and action-specific acknowledgement
+  generation.
 - `internal/store`: PostgreSQL migrations, terminal state, exact raw device
-  event source values, gateway activity history, operator users, and hashed
-  sessions.
+  event source values, gateway activity history, PushSDK session checkpoints,
+  operator users, and hashed operator sessions.
 - `internal/httpapi`: session-authenticated API, static console delivery,
   origin-checked WebSocket, private metrics, and health endpoints.
 - `internal/monitor`: in-memory fan-out of activity records that have already
@@ -37,10 +38,10 @@ denied at Nginx and additionally CIDR-checked by Go.
 
 There is no secondary receiver, HTTP forwarding path, event-name remapping,
 digest auto-detection, protocol compatibility parser, inferred media type,
-database fallback, or automatic terminal reconfiguration. Device events retain
-the exact source `eventList.data` value; gateway activity is separate safe
-operational metadata, not a parsed compatibility model or a second copy of the
-device payload.
+database fallback, previous-challenge acceptance, or automatic terminal
+reconfiguration. Device events retain the exact source `eventList.data` value;
+gateway activity is separate safe operational metadata, not a parsed
+compatibility model or a second copy of the device payload.
 
 Adding a new terminal capability is a schema and protocol change: document the
 vendor wire form, add a migration and tests, then release it. Do not add a

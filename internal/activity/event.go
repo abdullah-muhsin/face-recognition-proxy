@@ -6,14 +6,15 @@ package activity
 import "time"
 
 const (
-	KindAdminLogin           = "admin.login"
-	KindAdminLogout          = "admin.logout"
-	KindPushSDKAuthInfo      = "pushsdk.auth_info"
-	KindPushSDKLogin         = "pushsdk.login"
-	KindPushSDKLogout        = "pushsdk.logout"
-	KindPushSDKRejected      = "pushsdk.rejected"
-	KindDeviceEventPersisted = "device.event_persisted"
-	KindDeviceEventDuplicate = "device.event_duplicate"
+	KindAdminLogin            = "admin.login"
+	KindAdminLogout           = "admin.logout"
+	KindPushSDKAuthInfo       = "pushsdk.auth_info"
+	KindPushSDKLogin          = "pushsdk.login"
+	KindPushSDKLogout         = "pushsdk.logout"
+	KindPushSDKSessionResumed = "pushsdk.session_resumed"
+	KindPushSDKRejected       = "pushsdk.rejected"
+	KindDeviceEventPersisted  = "device.event_persisted"
+	KindDeviceEventDuplicate  = "device.event_duplicate"
 )
 
 type Event struct {

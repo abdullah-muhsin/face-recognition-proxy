@@ -92,10 +92,11 @@ func (s *Store) Migrate(ctx context.Context, directory string) error {
 }
 
 // SynchronizeConfiguredTerminals upserts every deployed terminal mapping. A
-// process restart cannot prove that an old socket is still alive, so every
-// configured terminal starts as offline until it completes AuthInfo and Login
-// again. Historical terminal rows are intentionally retained because device
-// events reference their canonical serial numbers.
+// process restart cannot prove that a terminal is still reachable, so every
+// configured terminal starts offline until its next valid PushSDK request
+// confirms a restored session or completes a fresh authentication exchange.
+// Historical terminal rows are intentionally retained because device events
+// reference their canonical serial numbers.
 func (s *Store) SynchronizeConfiguredTerminals(ctx context.Context, terminals []config.Terminal) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -220,6 +221,93 @@ func (s *Store) TerminalStates(ctx context.Context) ([]TerminalState, error) {
 		states = append(states, state)
 	}
 	return states, rows.Err()
+}
+
+// PushSDKSession contains only protocol state already shared with a terminal.
+// It deliberately excludes the terminal password, which remains in the
+// protected environment and is used only when validating protocol messages.
+type PushSDKSession struct {
+	TerminalSerialNumber     string
+	ConfigurationFingerprint string
+	PayloadMode              string
+	Salt                     string
+	LoginChallenge           string
+	NextChallenge            string
+	Iterations               int
+	CreatedAt                time.Time
+	NextChallengeAt          *time.Time
+	Authenticated            bool
+}
+
+func (s *Store) UpsertPushSDKSession(ctx context.Context, session PushSDKSession) error {
+	_, err := s.pool.Exec(ctx, `INSERT INTO pushsdk_sessions
+		(terminal_serial_number, configuration_fingerprint, payload_mode, salt, login_challenge, next_challenge, iterations, created_at, next_challenge_at, authenticated)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		ON CONFLICT (terminal_serial_number) DO UPDATE SET
+		  configuration_fingerprint = EXCLUDED.configuration_fingerprint,
+		  payload_mode = EXCLUDED.payload_mode,
+		  salt = EXCLUDED.salt,
+		  login_challenge = EXCLUDED.login_challenge,
+		  next_challenge = EXCLUDED.next_challenge,
+		  iterations = EXCLUDED.iterations,
+		  created_at = EXCLUDED.created_at,
+		  next_challenge_at = EXCLUDED.next_challenge_at,
+		  authenticated = EXCLUDED.authenticated`,
+		session.TerminalSerialNumber,
+		session.ConfigurationFingerprint,
+		session.PayloadMode,
+		session.Salt,
+		session.LoginChallenge,
+		session.NextChallenge,
+		session.Iterations,
+		session.CreatedAt,
+		session.NextChallengeAt,
+		session.Authenticated,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert PushSDK session: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) PushSDKSessions(ctx context.Context) ([]PushSDKSession, error) {
+	rows, err := s.pool.Query(ctx, `SELECT terminal_serial_number, configuration_fingerprint, payload_mode, salt, login_challenge, next_challenge, iterations, created_at, next_challenge_at, authenticated
+		FROM pushsdk_sessions ORDER BY terminal_serial_number`)
+	if err != nil {
+		return nil, fmt.Errorf("load PushSDK sessions: %w", err)
+	}
+	defer rows.Close()
+	sessions := []PushSDKSession{}
+	for rows.Next() {
+		var session PushSDKSession
+		if err := rows.Scan(
+			&session.TerminalSerialNumber,
+			&session.ConfigurationFingerprint,
+			&session.PayloadMode,
+			&session.Salt,
+			&session.LoginChallenge,
+			&session.NextChallenge,
+			&session.Iterations,
+			&session.CreatedAt,
+			&session.NextChallengeAt,
+			&session.Authenticated,
+		); err != nil {
+			return nil, fmt.Errorf("scan PushSDK session: %w", err)
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate PushSDK sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+func (s *Store) DeletePushSDKSession(ctx context.Context, terminalSerial string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM pushsdk_sessions WHERE terminal_serial_number = $1`, terminalSerial)
+	if err != nil {
+		return fmt.Errorf("delete PushSDK session: %w", err)
+	}
+	return nil
 }
 
 type DeviceEvent struct {

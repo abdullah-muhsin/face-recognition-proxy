@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -56,11 +57,14 @@ func run(logger *slog.Logger) error {
 	registry.MustRegister(prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 	metrics := pushsdk.NewMetrics(registry)
 	hub := monitor.NewHub()
+	push := pushsdk.NewService(cfg, data, hub, metrics, logger)
+	if err := push.RestoreSessions(ctx); err != nil {
+		return fmt.Errorf("restore PushSDK sessions: %w", err)
+	}
 	api, err := httpapi.New(cfg, data, hub, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), logger)
 	if err != nil {
 		return err
 	}
-	push := pushsdk.NewService(cfg, data, hub, metrics, logger)
 	mux := http.NewServeMux()
 	api.Register(mux)
 	mux.Handle("/iot/", push)

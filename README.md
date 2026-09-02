@@ -21,9 +21,10 @@ requests by path and upgrades the browser monitoring WebSocket only at `/ws/`.
 ## Data and security model
 
 PostgreSQL stores registered terminals, raw device-event source values,
-gateway activity, and hashed operator sessions. Every valid PushSDK
-`eventList` item is deduplicated with the terminal serial plus its vendor UUID,
-so device retries are safe and do not create duplicate events.
+gateway activity, authenticated PushSDK protocol state, and hashed operator
+sessions. Every valid PushSDK `eventList` item is deduplicated with the
+terminal serial plus its vendor UUID, so device retries are safe and do not
+create duplicate events.
 
 The gateway does not contain an HTTP forwarder, queue, SQLite fallback, or an
 external data store. A successfully acknowledged device event has already been
@@ -38,6 +39,17 @@ PostgreSQL and is available only to a signed-in operator through Device Events;
 it is never broadcast through the monitor or emitted in logs. An event payload
 can contain sensitive vendor data, including binary media, so operator
 credentials control access to it.
+
+The PushSDK session checkpoint contains only the negotiated payload mode,
+server-issued salt and challenges, iteration count, timestamps, and a hash of
+the exact terminal protocol configuration. It never contains a terminal
+password. The gateway commits the next challenge before sending each successful
+response. On startup it restores only a configuration-matched checkpoint that
+is still inside the vendor's three-command-interval challenge window. This
+allows a normal short gateway restart to continue the existing session without
+turning PushSDK off and on at the terminal. An expired or changed session is
+deleted and receives the documented invalid-session response; the gateway never
+guesses a challenge or changes terminal configuration.
 
 ## Strict PushSDK contract
 
@@ -57,6 +69,10 @@ This gateway intentionally accepts only the documented protocol forms:
   configuration, not an auto-detected or retry fallback. Subsequent
   actions validate `My-Custom-Auth`, calculated from the previous
   server-issued `My-Custom-Challenge`.
+- Every accepted authenticated action durably checkpoints its replacement
+  challenge before exposing it in a response. A process restart therefore
+  resumes the same strict sequence; it does not introduce a permissive
+  previous-challenge fallback.
 - `Login` and `Logout` use the standard response envelope. `CommandRequest`
   and `CommandResult` use their documented top-level command fields, while an
   `Event` response is the documented top-level per-event result array; they are

@@ -38,19 +38,29 @@ online registration before continuing.
    because of UUID deduplication.
 6. Inspect Prometheus from the private host path. Confirm request/event counters
    move and no rejected-event counter increases.
-7. Test a terminal logout/reconnect and a gateway restart. The console must show
-   offline after restart until the terminal performs `AuthInfo` and `Login`
-   again automatically. Device Events and Gateway Activity must still show the
-   records from before the restart.
+7. Test a terminal logout/reconnect and then a short gateway restart while the
+   terminal is online. On its next scheduled request, the console must record
+   `pushsdk.session_resumed` and return to `online` without a new `AuthInfo` or
+   `Login`. Device Events and Gateway Activity must still show records from
+   before the restart.
 
 ## Gateway restart recovery
 
-PushSDK challenges are intentionally in-memory and cannot be reconstructed
-after a gateway restart. A request that belongs to the expired session receives
-the documented `401` invalid-session envelope (`0x0020000f`, `Invalid
-SessionID.`) without a next challenge. The device then performs `AuthInfo` and
-`Login` itself; the gateway never persists, replays, or guesses a challenge and
-never alters terminal configuration automatically.
+The gateway checkpoints every negotiated session before replying to the
+terminal. The checkpoint contains no terminal password: only the payload mode,
+server-generated salt and challenge values, their timestamps, iteration count,
+and an exact configuration fingerprint. At startup, it restores a checkpoint
+only when the terminal configuration still matches and the most recent
+challenge is younger than the vendor's three-command-interval validity window.
+The first valid request proves that continuity and records
+`pushsdk.session_resumed` before the next challenge is issued.
+
+If the outage exceeds that protocol window, or the configured PushSDK contract
+changes, the checkpoint is deleted. The corresponding request receives the
+documented `401` invalid-session envelope (`0x0020000f`, `Invalid SessionID.`)
+without a next challenge. A conforming terminal then performs `AuthInfo` and
+`Login`; the gateway never replays or guesses a challenge and never changes
+terminal configuration automatically.
 
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a

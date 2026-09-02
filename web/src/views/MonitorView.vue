@@ -83,7 +83,7 @@ const monitorConnectionSeverity = computed(
               </summary>
               <pre
                 class="mt-2 overflow-x-auto rounded-lg bg-slate-950 p-3 text-xs leading-5 text-slate-100"
-              >{{ formatFields(event.fields) }}</pre>
+                >{{ formatFields(event.fields) }}</pre>
             </details>
           </div>
         </article>

@@ -184,11 +184,29 @@ func (c Config) TerminalByPushSDKSerial(serial string) (Terminal, bool) {
 	return Terminal{}, false
 }
 
+func (c Config) TerminalBySerialNumber(serial string) (Terminal, bool) {
+	for _, terminal := range c.Terminals {
+		if terminal.SerialNumber == serial {
+			return terminal, true
+		}
+	}
+	return Terminal{}, false
+}
+
 // CredentialFingerprint lets operational logs identify a changed terminal
 // credential without disclosing the username or password.
 func (t Terminal) CredentialFingerprint() string {
 	sum := sha256.Sum256([]byte(t.Username + "\x00" + t.Password))
 	return hex.EncodeToString(sum[:8])
+}
+
+// SessionFingerprint binds persisted PushSDK protocol state to the complete
+// configured PushSDK contract without retaining the terminal password itself.
+// Changing any configured wire-protocol setting intentionally requires a new
+// authentication exchange rather than resuming an incompatible session.
+func (t Terminal) SessionFingerprint() string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d\x00%s", t.CredentialFingerprint(), t.LoginPasswordDigest, t.SecurityVersion, t.CommandIntervalSeconds, t.ErrorDelaySeconds, t.PushSDKSerial)))
+	return hex.EncodeToString(sum[:])
 }
 
 func env(name string) string { return os.Getenv(name) }
