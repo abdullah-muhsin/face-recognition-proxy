@@ -55,6 +55,11 @@ PushSDK is enabled. At gateway startup, `SeedConfiguredTerminals` records the
 canonical identity and begins it in `offline` state. A successful `AuthInfo`
 and `Login` exchange is the only path to `online`.
 
+This configuration was accepted by the terminal on 2026-09-02. It then
+reported `online` and the gateway recorded `AuthInfo` and `Login` at security
+version `4` in plaintext payload mode. That observed payload mode is retained
+as protocol state; it is not converted to an encrypted mode by the gateway.
+
 ```json
 {
   "serialNumber": "DS-K1T342MFWX-E120260629V044840ENGN0954003",
@@ -68,11 +73,11 @@ and `Login` exchange is the only path to `online`.
 }
 ```
 
-The initial `AuthInfo` exchange must confirm security version `4` and login
-password digest `sha256`; this gateway does not guess, normalize, or downgrade
-the negotiated contract. If the terminal instead presents another exact
-identifier or negotiation value, stop enrolment and correct the protected
-mapping before accepting events or commands.
+The mapping's login password digest is `sha256`. The initial `AuthInfo`
+exchange must confirm security version `4`; this gateway does not guess,
+normalize, or downgrade the negotiated contract. If the terminal instead
+presents another exact identifier or negotiation value, stop enrolment and
+correct the protected mapping before accepting events or commands.
 
 ## Verified device capabilities relevant to the gateway
 
@@ -82,3 +87,13 @@ management, face capture, infrared face capture, face-recognition mode, and
 device-event support. Once it is online, gateway operators can submit any
 documented ISAPI command through the audited PushSDK command API; the command
 remains queued until the terminal polls for it.
+
+## Acceptance record
+
+After the first online registration, the gateway delivered a read-only
+`GET /ISAPI/System/deviceInfo` command through the public administration API.
+The terminal completed it, and its retained response bytes confirmed model
+`DS-K1T342MFWX-E1`, the serial above, and firmware `V4.48.40`. The terminal
+omitted `dataFormat` from that command result; the gateway records that exact
+absence (`responseDataFormatDeclared: false`) while retaining the response
+bytes. It does not infer or rewrite a response format.
