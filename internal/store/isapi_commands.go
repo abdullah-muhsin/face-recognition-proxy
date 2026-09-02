@@ -197,6 +197,13 @@ func (s *Store) ClaimISAPICommands(ctx context.Context, terminalSerial string, l
 			return nil, nil, fmt.Errorf("scan claimed ISAPI command: %w", err)
 		}
 		deliveries = append(deliveries, delivery)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, nil, fmt.Errorf("iterate claimed ISAPI commands: %w", err)
+	}
+	rows.Close()
+	for _, delivery := range deliveries {
 		stored, err := insertGatewayActivity(ctx, tx, activity.Event{
 			Kind:     activity.KindPushSDKCommandSent,
 			Terminal: terminalSerial,
@@ -212,9 +219,6 @@ func (s *Store) ClaimISAPICommands(ctx context.Context, terminalSerial string, l
 			return nil, nil, err
 		}
 		activities = append(activities, stored)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("iterate claimed ISAPI commands: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, fmt.Errorf("commit claimed ISAPI commands: %w", err)
@@ -394,12 +398,21 @@ func expireQueuedISAPICommands(ctx context.Context, tx pgx.Tx, terminalSerial st
 		return nil, fmt.Errorf("expire queued ISAPI commands: %w", err)
 	}
 	defer rows.Close()
-	activities := []activity.Event{}
+	commands := []ISAPICommand{}
 	for rows.Next() {
 		var command ISAPICommand
 		if err := rows.Scan(&command.UUID, &command.Method, &command.URL, &command.DataFormat); err != nil {
 			return nil, fmt.Errorf("scan expired ISAPI command: %w", err)
 		}
+		commands = append(commands, command)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("iterate expired ISAPI commands: %w", err)
+	}
+	rows.Close()
+	activities := []activity.Event{}
+	for _, command := range commands {
 		stored, err := insertGatewayActivity(ctx, tx, activity.Event{
 			Kind:     activity.KindPushSDKCommandExpired,
 			Terminal: terminalSerial,
@@ -412,9 +425,6 @@ func expireQueuedISAPICommands(ctx context.Context, tx pgx.Tx, terminalSerial st
 			return nil, err
 		}
 		activities = append(activities, stored)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate expired ISAPI commands: %w", err)
 	}
 	return activities, nil
 }
