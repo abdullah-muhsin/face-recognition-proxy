@@ -22,9 +22,9 @@ const categories = [
   { value: 'alarm', label: 'Alarm' },
 ]
 const sources = [
-  { value: 'all', label: 'All sources' },
-  { value: 'pushsdk', label: 'PushSDK delivery' },
-  { value: 'isapi', label: 'Retained ISAPI history' },
+  { value: 'all', label: 'All records' },
+  { value: 'pushsdk', label: 'Live PushSDK' },
+  { value: 'isapi', label: 'Synced device history' },
 ]
 const category = ref(gateway.deviceEventQuery.category)
 const subtype = ref(gateway.deviceEventQuery.subtype)
@@ -48,9 +48,13 @@ const selectedSubtypeLabel = computed(() => {
   return selected ? subtypeLabel(selected) : ''
 })
 const currentViewLabel = computed(() => {
-  if (category.value === 'all') return 'All archived events'
+  if (category.value === 'all') return 'All event records'
   return `${selectedCategory.value.label} events`
 })
+
+function archiveSourceLabel(value) {
+  return value === 'isapi' ? 'Synced device history' : 'Live PushSDK'
+}
 const currentPageStart = computed(() =>
   gateway.deviceEventsTotal === 0 ? 0 : gateway.deviceEventsOffset + 1,
 )
@@ -324,7 +328,7 @@ async function copyReadablePayload() {
             />
           </div>
           <span v-else class="text-sm text-slate-500"
-            >All retained source records and classification states</span
+            >All event records and classification states</span
           >
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -344,14 +348,18 @@ async function copyReadablePayload() {
               {{ item.serialNumber }}
             </option>
           </select>
-          <label class="sr-only" for="event-source">Archive source</label>
+          <label class="sr-only" for="event-source">Record origin</label>
           <select
             id="event-source"
             v-model="source"
             class="h-9 min-w-48 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700 shadow-sm outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
             @change="selectSource"
           >
-            <option v-for="item in sources" :key="item.value" :value="item.value">
+            <option
+              v-for="item in sources"
+              :key="item.value"
+              :value="item.value"
+            >
               {{ item.label }}
             </option>
           </select>
@@ -493,7 +501,7 @@ async function copyReadablePayload() {
             >{{ data.sourceRecordId }}</code
           >
           <Tag
-            :value="data.source === 'isapi' ? 'Retained ISAPI' : 'PushSDK delivery'"
+            :value="archiveSourceLabel(data.source)"
             severity="secondary"
             rounded
             class="mt-1"
@@ -583,7 +591,7 @@ async function copyReadablePayload() {
             Archive source
           </p>
           <p class="mt-1 font-medium text-slate-700">
-            {{ selectedPayload.source === 'isapi' ? 'Retained ISAPI history' : 'PushSDK delivery' }}
+            {{ archiveSourceLabel(selectedPayload.source) }}
           </p>
         </div>
         <div>

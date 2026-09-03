@@ -47,7 +47,11 @@ async function refresh() {
 }
 
 function syncRunFor(terminal) {
-  return syncRuns.value[terminal.serialNumber] ?? terminal.latestAccessEventSync ?? null
+  return (
+    syncRuns.value[terminal.serialNumber] ??
+    terminal.latestAccessEventSync ??
+    null
+  )
 }
 
 function syncIsActive(terminal) {
@@ -83,7 +87,10 @@ function trackSync(run) {
         await gateway.loadDeviceEvents()
       } catch (error) {
         if (isAuthenticationError(error)) {
-          await router.replace({ name: 'login', query: { redirect: route.fullPath } })
+          await router.replace({
+            name: 'login',
+            query: { redirect: route.fullPath },
+          })
           return
         }
         toast.add({
@@ -104,12 +111,16 @@ async function syncRetainedEvents(terminal) {
     toast.add({
       severity: 'info',
       summary: 'Retained event sync queued',
-      detail: 'The gateway will use the terminal’s own clock and page its retained archive through PushSDK.',
+      detail:
+        'The gateway will use the terminal’s own clock and page its retained archive through PushSDK.',
       life: 5000,
     })
   } catch (error) {
     if (isAuthenticationError(error)) {
-      await router.replace({ name: 'login', query: { redirect: route.fullPath } })
+      await router.replace({
+        name: 'login',
+        query: { redirect: route.fullPath },
+      })
       return
     }
     toast.add({
@@ -227,7 +238,11 @@ async function syncRetainedEvents(terminal) {
         <template #body="{ data }">
           <p
             class="max-w-64 text-xs"
-            :class="syncRunFor(data)?.status === 'failed' ? 'text-red-700' : 'text-slate-600'"
+            :class="
+              syncRunFor(data)?.status === 'failed'
+                ? 'text-red-700'
+                : 'text-slate-600'
+            "
           >
             {{ syncSummary(data) }}
           </p>
@@ -242,7 +257,11 @@ async function syncRetainedEvents(terminal) {
             outlined
             :loading="syncIsActive(data)"
             :disabled="data.status !== 'online' || syncIsActive(data)"
-            :title="data.status === 'online' ? 'Read the complete retained access-event archive through this terminal’s PushSDK session.' : 'The terminal must be online before a retained-event sync can be queued.'"
+            :title="
+              data.status === 'online'
+                ? 'Read the complete retained access-event archive through this terminal’s PushSDK session.'
+                : 'The terminal must be online before a retained-event sync can be queued.'
+            "
             @click="syncRetainedEvents(data)"
           />
         </template>

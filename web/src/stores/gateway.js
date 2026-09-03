@@ -6,6 +6,16 @@ const pageSize = 25
 const monitorLimit = 100
 const monitorRefreshDelay = 350
 const monitorReconnectDelay = 3000
+
+function initialDeviceEventQuery() {
+  return {
+    category: 'all',
+    subtype: null,
+    terminal: '',
+    source: 'all',
+  }
+}
+
 const snapshotActivityKinds = new Set([
   'device.event_persisted',
   'pushsdk.auth_info',
@@ -39,12 +49,7 @@ export const useGatewayStore = defineStore('gateway', () => {
   const deviceEvents = ref([])
   const deviceEventsTotal = ref(0)
   const deviceEventsOffset = ref(0)
-  const deviceEventQuery = ref({
-    category: 'all',
-    subtype: null,
-    terminal: '',
-    source: 'all',
-  })
+  const deviceEventQuery = ref(initialDeviceEventQuery())
   const deviceEventSubtypes = ref([])
   const gatewayActivities = ref([])
   const gatewayActivitiesTotal = ref(0)
@@ -120,7 +125,9 @@ export const useGatewayStore = defineStore('gateway', () => {
   }
 
   function loadDeviceEventPayload(source, id) {
-    return request(`/api/v1/admin/events/${encodeURIComponent(source)}/${id}/payload`)
+    return request(
+      `/api/v1/admin/events/${encodeURIComponent(source)}/${id}/payload`,
+    )
   }
 
   function queueAccessEventSync(serial) {
@@ -131,7 +138,9 @@ export const useGatewayStore = defineStore('gateway', () => {
   }
 
   function loadAccessEventSync(uuid) {
-    return request(`/api/v1/admin/retained-event-syncs/${encodeURIComponent(uuid)}`)
+    return request(
+      `/api/v1/admin/retained-event-syncs/${encodeURIComponent(uuid)}`,
+    )
   }
 
   async function loadGatewayActivities(offset = gatewayActivitiesOffset.value) {
@@ -354,7 +363,7 @@ export const useGatewayStore = defineStore('gateway', () => {
     deviceEvents.value = []
     deviceEventsTotal.value = 0
     deviceEventsOffset.value = 0
-    deviceEventQuery.value = { category: 'all', subtype: null, terminal: '' }
+    deviceEventQuery.value = initialDeviceEventQuery()
     deviceEventSubtypes.value = []
     gatewayActivities.value = []
     gatewayActivitiesTotal.value = 0
