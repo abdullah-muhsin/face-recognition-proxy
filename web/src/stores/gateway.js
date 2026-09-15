@@ -22,6 +22,7 @@ const snapshotActivityKinds = new Set([
   'pushsdk.login',
   'pushsdk.logout',
   'pushsdk.session_resumed',
+  'pushsdk.session_expired',
   'admin.access_event_sync_queued',
   'device.access_event_sync_started',
   'device.access_event_sync_page_captured',

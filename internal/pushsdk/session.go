@@ -101,7 +101,10 @@ func (s *Sessions) Replace(pushSDKSerial string, session *Session) {
 // Restore loads only still-valid, configuration-matched session state. It is
 // sufficient to verify the next device request after a process restart, but it
 // never recreates a session after the vendor's challenge-validity window.
-func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data *store.Store, now time.Time) (int, error) {
+func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data interface {
+	PushSDKSessions(context.Context) ([]store.PushSDKSession, error)
+	DeletePushSDKSession(context.Context, string) error
+}, now time.Time) (int, error) {
 	storedSessions, err := data.PushSDKSessions(ctx)
 	if err != nil {
 		return 0, err

@@ -70,6 +70,27 @@ without a next challenge. A conforming terminal then performs `AuthInfo` and
 `Login`; the gateway never replays or guesses a challenge and never changes
 terminal configuration automatically.
 
+The gateway checks idle sessions every five seconds. An expired session is
+removed from memory and PostgreSQL, and its terminal becomes `offline` with a
+`pushsdk.session_expired` activity. The database transition and checkpoint
+deletion commit together. `last_seen_at` records the latest successfully
+authenticated exchange; expiry and rejected retries do not advance it. The
+console refreshes its terminal snapshot when it receives the expiry activity.
+
+All exchanges for one terminal, including `AuthInfo` replacement and response
+writing, are serialized. A stale request with the wrong authentication proof
+receives `401` but cannot delete a newer, valid session. A device can start a
+fresh `AuthInfo`/`Login` exchange without a gateway restart or inventory change.
+
+If the device repeats `Event` requests with `401` and never sends `AuthInfo`,
+automatic recovery has not completed. Check the safe `reason` field in rejection
+activity (`missing_session`, `next_challenge_expired`, or `custom_auth_mismatch`).
+The March 2026 Hikvision demo's `HandleCommonResponse` uses the same three-field
+invalid-session response for authenticated operations. Its lock/retry fields
+belong to login failures; they are not a documented event-recovery mechanism.
+Do not claim firmware recovery from a gateway unit test: verify a fresh login
+and successful command polling from the physical device after an interruption.
+
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a
 permissive parser fallback to force the test through.

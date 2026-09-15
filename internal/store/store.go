@@ -393,7 +393,12 @@ type PushSDKSession struct {
 }
 
 func (s *Store) UpsertPushSDKSession(ctx context.Context, session PushSDKSession) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO pushsdk_sessions
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin PushSDK checkpoint: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO pushsdk_sessions
 		(terminal_serial_number, configuration_fingerprint, payload_mode, salt, login_challenge, next_challenge, iterations, created_at, next_challenge_at, authenticated)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (terminal_serial_number) DO UPDATE SET
@@ -420,7 +425,48 @@ func (s *Store) UpsertPushSDKSession(ctx context.Context, session PushSDKSession
 	if err != nil {
 		return fmt.Errorf("upsert PushSDK session: %w", err)
 	}
-	return nil
+	if session.Authenticated {
+		// Only a successfully authenticated exchange refreshes last seen.
+		// A timeout or an unauthenticated retry must never make a device look live.
+		if _, err := tx.Exec(ctx, `UPDATE terminals SET last_seen_at = $2, updated_at = now()
+			WHERE serial_number = $1`, session.TerminalSerialNumber, session.NextChallengeAt); err != nil {
+			return fmt.Errorf("update terminal last seen: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// ExpirePushSDKSession atomically removes unusable credentials and marks the
+// terminal offline without advancing its last authenticated contact time.
+// Repeated expiry/rejection does not emit repeated offline transitions.
+func (s *Store) ExpirePushSDKSession(ctx context.Context, serial, reason string) (*activity.Event, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM pushsdk_sessions WHERE terminal_serial_number = $1`, serial); err != nil {
+		return nil, err
+	}
+	result, err := tx.Exec(ctx, `UPDATE terminals SET connection_status = 'offline', last_error = $2, updated_at = now()
+		WHERE serial_number = $1 AND connection_status <> 'offline'`, serial, reason)
+	if err != nil {
+		return nil, err
+	}
+	var event *activity.Event
+	if result.RowsAffected() > 0 {
+		stored, err := insertGatewayActivity(ctx, tx, activity.Event{
+			Kind: activity.KindPushSDKSessionExpired, Terminal: serial, Message: reason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		event = &stored
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 func (s *Store) PushSDKSessions(ctx context.Context) ([]PushSDKSession, error) {

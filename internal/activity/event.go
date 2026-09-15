@@ -14,6 +14,7 @@ const (
 	KindPushSDKLogin                      = "pushsdk.login"
 	KindPushSDKLogout                     = "pushsdk.logout"
 	KindPushSDKSessionResumed             = "pushsdk.session_resumed"
+	KindPushSDKSessionExpired             = "pushsdk.session_expired"
 	KindPushSDKRejected                   = "pushsdk.rejected"
 	KindPushSDKCommandSent                = "pushsdk.command_sent"
 	KindPushSDKCommandCompleted           = "pushsdk.command_completed"

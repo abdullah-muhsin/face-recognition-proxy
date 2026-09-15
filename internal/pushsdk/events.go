@@ -18,6 +18,8 @@ type ProtocolError struct {
 	Status  int
 	Code    string
 	Message string
+	// Reason is safe diagnostic metadata; it is never part of the vendor response.
+	Reason string
 }
 
 func (e *ProtocolError) Error() string { return e.Message }
@@ -35,11 +37,12 @@ const (
 	invalidSessionMessage = "Invalid SessionID."
 )
 
-func invalidSession() error {
+func invalidSession(reason string) error {
 	return &ProtocolError{
 		Status:  http.StatusUnauthorized,
 		Code:    invalidSessionCode,
 		Message: invalidSessionMessage,
+		Reason:  reason,
 	}
 }
 

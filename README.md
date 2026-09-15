@@ -261,6 +261,11 @@ Run `make test` and `make vet` to verify the Go service with the same Go 1.24
 toolchain used by the production image. They explicitly test the gateway's Go
 source roots so ignored frontend dependencies cannot affect the result.
 
+Session recovery tests cover expiry, a fresh login after rejection, and delayed
+requests from an old session. To also run the PostgreSQL transaction test, set
+`GATEWAY_TEST_DATABASE_URL` when running `go test ./internal/store`; it creates
+and removes a dedicated test schema in that database.
+
 The Vite server serves the console at `/app/`. For authenticated behaviour,
 run it through the gateway or the local Compose stack so its same-origin API
 and WebSocket endpoints are available.

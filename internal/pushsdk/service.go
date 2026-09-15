@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/itplus/pushsdk-gateway/internal/activity"
@@ -24,17 +25,37 @@ const (
 	commandDeadlineSweepInterval = 5 * time.Second
 )
 
+type serviceStore interface {
+	PushSDKSessions(context.Context) ([]store.PushSDKSession, error)
+	UpsertPushSDKSession(context.Context, store.PushSDKSession) error
+	DeletePushSDKSession(context.Context, string) error
+	ExpirePushSDKSession(context.Context, string, string) (*activity.Event, error)
+	TransitionTerminalState(context.Context, string, string, *string, activity.Event) (activity.Event, error)
+	RecordGatewayActivity(context.Context, activity.Event) (activity.Event, error)
+	ExpireOverdueISAPICommands(context.Context) ([]activity.Event, error)
+	ClaimISAPICommands(context.Context, string, int) ([]store.ISAPICommandDelivery, []activity.Event, error)
+	CompleteISAPICommands(context.Context, string, []store.ISAPICommandResult) ([]activity.Event, bool, error)
+	InsertDeviceEventBatch(context.Context, []store.NewDeviceEvent) ([]store.DeviceEventPersistence, error)
+}
+
 type Service struct {
 	config   config.Config
 	sessions *Sessions
-	store    *store.Store
+	store    serviceStore
 	hub      *monitor.Hub
 	metrics  *Metrics
 	logger   *slog.Logger
+	// Fixed at construction: unregistered IDs cannot grow this map. Keep each
+	// terminal's authentication, checkpoint, and response in one ordered exchange.
+	terminalLocks map[string]*sync.Mutex
 }
 
-func NewService(cfg config.Config, data *store.Store, hub *monitor.Hub, metrics *Metrics, logger *slog.Logger) *Service {
-	return &Service{config: cfg, sessions: NewSessions(), store: data, hub: hub, metrics: metrics, logger: logger}
+func NewService(cfg config.Config, data serviceStore, hub *monitor.Hub, metrics *Metrics, logger *slog.Logger) *Service {
+	locks := make(map[string]*sync.Mutex, len(cfg.Terminals))
+	for _, terminal := range cfg.Terminals {
+		locks[terminal.PushSDKSerial] = &sync.Mutex{}
+	}
+	return &Service{config: cfg, sessions: NewSessions(), store: data, hub: hub, metrics: metrics, logger: logger, terminalLocks: locks}
 }
 
 func (s *Service) RestoreSessions(ctx context.Context) error {
@@ -70,11 +91,56 @@ func (s *Service) MaintainISAPICommandDeadlines(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if err := s.ExpireSessions(ctx, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
+				s.logger.Error("expire PushSDK sessions", "error", err)
+			}
 			if err := s.ExpireISAPICommandDeadlines(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				s.logger.Error("reconcile ISAPI command deadlines", "error", err)
 			}
 		}
 	}
+}
+
+// ExpireSessions also handles silent devices: no later request is needed to
+// mark a dead session offline. Requests for other terminals remain independent.
+func (s *Service) ExpireSessions(ctx context.Context, now time.Time) error {
+	var failures []error
+	for _, terminal := range s.config.Terminals {
+		lock := s.terminalLocks[terminal.PushSDKSerial]
+		if !lock.TryLock() {
+			continue
+		}
+		session, found := s.sessions.Get(terminal.PushSDKSerial)
+		if found {
+			session.mu.Lock()
+			if (session.Authenticated && session.NextChallengeExpired(now)) || (!session.Authenticated && session.LoginChallengeExpired(now)) {
+				if err := s.expireSession(ctx, terminal, session); err != nil {
+					failures = append(failures, err)
+				}
+			}
+			session.mu.Unlock()
+		}
+		lock.Unlock()
+	}
+	return errors.Join(failures...)
+}
+
+// Caller holds the terminal lock and, when present, the session lock. Commit
+// the offline state and session deletion together before removing memory state.
+func (s *Service) expireSession(ctx context.Context, terminal config.Terminal, session *Session) error {
+	stored, err := s.store.ExpirePushSDKSession(ctx, terminal.SerialNumber, "PushSDK session expired; waiting for device authentication")
+	if err != nil {
+		return err
+	}
+	s.sessions.Remove(terminal.PushSDKSerial)
+	if session != nil && session.Authenticated {
+		session.Authenticated = false
+		s.metrics.SessionsActive.Dec()
+	}
+	if stored != nil {
+		s.hub.Publish(*stored)
+	}
+	return nil
 }
 
 func (s *Service) persistSession(ctx context.Context, session *Session) error {
@@ -131,6 +197,9 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		s.respondError(writer, http.StatusNotFound, "terminal is not registered")
 		return
 	}
+	lock := s.terminalLocks[serial]
+	lock.Lock()
+	defer lock.Unlock()
 	request.Body = http.MaxBytesReader(writer, request.Body, maxRequestBytes)
 	body, err := readAll(request.Body)
 	if err != nil {
@@ -162,12 +231,17 @@ func (s *Service) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		status, code, message := protocolError(err)
 		s.metrics.Requests.WithLabelValues(action, "rejected").Inc()
-		s.logger.Warn("pushsdk request rejected", "terminal", terminal.SerialNumber, "action", action, "status", status, "error", message)
+		fields := map[string]any{"action": action, "status": status, "code": code}
+		var protocol *ProtocolError
+		if errors.As(err, &protocol) && protocol.Reason != "" {
+			fields["reason"] = protocol.Reason
+		}
+		s.logger.Warn("pushsdk request rejected", "terminal", terminal.SerialNumber, "action", action, "status", status, "error", message, "reason", fields["reason"])
 		if recordErr := s.recordGatewayActivity(request.Context(), activity.Event{
 			Kind:     activity.KindPushSDKRejected,
 			Terminal: terminal.SerialNumber,
 			Message:  message,
-			Fields:   map[string]any{"action": action, "status": status, "code": code},
+			Fields:   fields,
 		}); recordErr != nil {
 			s.logger.Error("record rejected PushSDK request", "terminal", terminal.SerialNumber, "action", action, "error", recordErr)
 		}
@@ -316,15 +390,15 @@ type loginResponseData struct {
 func (s *Service) login(ctx context.Context, terminal config.Terminal, request *http.Request, requestBody []byte) (protocolResponse, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
-		return protocolResponse{}, nil, invalidSession()
+		return protocolResponse{}, nil, invalidSession("missing_session")
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if session.LoginChallengeExpired(time.Now().UTC()) {
-		if err := s.removeSession(ctx, terminal); err != nil {
+		if err := s.expireSession(ctx, terminal, session); err != nil {
 			return protocolResponse{}, nil, err
 		}
-		return protocolResponse{}, nil, invalidSession()
+		return protocolResponse{}, nil, invalidSession("login_challenge_expired")
 	}
 	body, params, err := payloadForSession(request, terminal, session, "Login", requestBody, true)
 	if err != nil {
@@ -372,7 +446,9 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		}
 		return protocolResponse{}, nil, err
 	}
-	s.metrics.SessionsActive.Inc()
+	if !previousAuthenticated {
+		s.metrics.SessionsActive.Inc()
+	}
 	s.hub.Publish(storedActivity)
 	result := protocolResponse{Body: loginResponse{successResponse: succeeded(), Data: loginResponseData{CommandInterval: terminal.CommandIntervalSeconds, ErrorDelay: terminal.ErrorDelaySeconds}}}
 	result.Challenge = next
@@ -388,21 +464,21 @@ type eventResponseItem struct {
 func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, action string, request *http.Request, requestBody []byte) (protocolResponse, *EncryptionParameters, error) {
 	session, found := s.sessions.Get(terminal.PushSDKSerial)
 	if !found {
-		return protocolResponse{}, nil, invalidSession()
+		return protocolResponse{}, nil, invalidSession("missing_session")
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if !session.Authenticated {
-		return protocolResponse{}, nil, invalidSession()
+		return protocolResponse{}, nil, invalidSession("not_authenticated")
 	}
 	if session.NextChallengeExpired(time.Now().UTC()) {
-		if err := s.removeSession(ctx, terminal); err != nil {
+		if err := s.expireSession(ctx, terminal, session); err != nil {
 			return protocolResponse{}, nil, err
 		}
-		return protocolResponse{}, nil, invalidSession()
+		return protocolResponse{}, nil, invalidSession("next_challenge_expired")
 	}
 	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.NextChallenge)) {
-		return protocolResponse{}, nil, invalidSession()
+		return protocolResponse{}, nil, invalidSession("custom_auth_mismatch")
 	}
 	if session.Restored {
 		storedActivity, err := s.store.TransitionTerminalState(
