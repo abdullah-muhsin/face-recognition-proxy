@@ -13,6 +13,7 @@ const navigation = [
   { to: '/events', label: 'Event archive', icon: 'pi pi-code' },
   { to: '/terminals', label: 'Terminal registry', icon: 'pi pi-server' },
   { to: '/isapi', label: 'ISAPI console', icon: 'pi pi-send' },
+  { to: '/deliveries', label: 'Event delivery', icon: 'pi pi-cloud-upload' },
   { to: '/activity', label: 'Gateway activity', icon: 'pi pi-list' },
 ]
 
@@ -152,7 +153,7 @@ async function signOut() {
           Data boundary
           <Button
             v-tooltip.right="
-              'Payloads stay in the event archive. Credentials are never exposed in this console.'
+              'Raw payloads stay in the archive. Configured destinations receive event metadata. Credentials are never exposed in this console.'
             "
             icon="pi pi-info-circle"
             text

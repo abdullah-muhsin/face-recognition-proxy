@@ -16,17 +16,18 @@ import (
 // Config is deliberately explicit: the service will not invent defaults for
 // credentials, terminals, or public security settings.
 type Config struct {
-	ListenAddress string
-	DatabaseURL   string
-	TerminalsFile string
-	AdminUsername string
-	AdminPassword string
-	CookieSecure  bool
-	SessionTTL    time.Duration
-	WebDir        string
-	MigrationsDir string
-	MetricsCIDRs  []string
-	Terminals     []Terminal
+	ListenAddress       string
+	DatabaseURL         string
+	TerminalsFile       string
+	AdminUsername       string
+	AdminPassword       string
+	CookieSecure        bool
+	SessionTTL          time.Duration
+	WebDir              string
+	MigrationsDir       string
+	MetricsCIDRs        []string
+	Terminals           []Terminal
+	DeliverySigningKeys map[string]string
 }
 
 type Terminal struct {
@@ -50,6 +51,11 @@ func Load() (Config, error) {
 		AdminPassword: env("ADMIN_PASSWORD"),
 		WebDir:        env("WEB_DIR"),
 		MigrationsDir: env("MIGRATIONS_DIR"),
+	}
+	if raw := os.Getenv("DELIVERY_SIGNING_KEYS"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &c.DeliverySigningKeys); err != nil || c.DeliverySigningKeys == nil {
+			return Config{}, fmt.Errorf("DELIVERY_SIGNING_KEYS must be a JSON object of key IDs and signing keys")
+		}
 	}
 	rawCookieSecure, present := os.LookupEnv("COOKIE_SECURE")
 	if !present || rawCookieSecure == "" {
@@ -109,6 +115,11 @@ func (c *Config) loadTerminals() error {
 }
 
 func (c Config) Validate() error {
+	for id, key := range c.DeliverySigningKeys {
+		if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(id) || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(key) {
+			return fmt.Errorf("DELIVERY_SIGNING_KEYS requires key IDs of 1..64 letters, digits, underscores or hyphens and 64 lowercase hexadecimal key values")
+		}
+	}
 	required := []struct {
 		name  string
 		value string

@@ -618,6 +618,9 @@ func (s *Store) InsertDeviceEventBatch(ctx context.Context, events []NewDeviceEv
 			if err := insertAccessEventProjection(ctx, tx, id, event); err != nil {
 				return nil, err
 			}
+			if err := enqueueEventDelivery(ctx, tx, id); err != nil {
+				return nil, err
+			}
 		}
 		kind, message := activity.KindDeviceEventDuplicate, "device event payload was already retained"
 		if persisted[index].Inserted {

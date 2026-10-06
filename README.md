@@ -13,6 +13,7 @@ Vue 3/Vite (JavaScript), Tailwind CSS, PrimeVue, WebSockets, and Prometheus.
 | `/api/v1/admin/terminals/{serial}/isapi-commands` | Administrators and approved gateway clients | Queue an exact ISAPI command for one online PushSDK terminal |
 | `/api/v1/admin/terminals/{serial}/retained-event-syncs` | Administrators | Reconcile one online terminal's retained access-event archive through PushSDK |
 | `/ws/v1/monitor` | Vue administration console | Authenticated replay and live stream of retained operational metadata |
+| `/api/v1/admin/delivery-configuration`, `/api/v1/admin/event-deliveries` | Administrators | Configure school destinations and review durable delivery |
 | `/metrics` | Prometheus only | Private metric endpoint |
 | `/healthz`, `/readyz` | Infrastructure | Liveness and database readiness |
 
@@ -29,9 +30,11 @@ PushSDK protocol state, and hashed administrator sessions. Every valid PushSDK
 terminal serial plus its vendor UUID, so device retries are safe and do not
 create duplicate events.
 
-The gateway does not contain an HTTP forwarder, queue, SQLite fallback, or an
-external data store. A successfully acknowledged device event has already been
-committed to PostgreSQL. If PostgreSQL is unavailable, the event is rejected so
+An optional [event delivery worker](docs/EVENT-DELIVERY.md) sends qualifying live
+face-authentication event metadata to explicitly configured school destinations
+through a PostgreSQL outbox. The gateway has no SQLite fallback or external data
+store. A successfully acknowledged device event and any applicable delivery
+record have already been committed to PostgreSQL. If PostgreSQL is unavailable, the event is rejected so
 the terminal can retry; it is never silently dropped.
 
 Gateway activity retains only status and protocol metadata; it deliberately

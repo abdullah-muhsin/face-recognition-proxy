@@ -55,6 +55,15 @@ const router = createRouter({
           },
         },
         {
+          path: 'deliveries',
+          name: 'deliveries',
+          component: () => import('../views/EventDeliveriesView.vue'),
+          meta: {
+            label: 'Event delivery',
+            description: 'Destinations and delivery audit',
+          },
+        },
+        {
           path: 'activity',
           name: 'activity',
           component: () => import('../views/GatewayActivityView.vue'),

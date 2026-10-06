@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itplus/pushsdk-gateway/internal/config"
+	"github.com/itplus/pushsdk-gateway/internal/delivery"
 	"github.com/itplus/pushsdk-gateway/internal/httpapi"
 	"github.com/itplus/pushsdk-gateway/internal/monitor"
 	"github.com/itplus/pushsdk-gateway/internal/pushsdk"
@@ -74,6 +75,7 @@ func run(logger *slog.Logger) error {
 	runtimeContext, stopRuntimeMaintenance := context.WithCancel(context.Background())
 	defer stopRuntimeMaintenance()
 	go push.MaintainISAPICommandDeadlines(runtimeContext)
+	go delivery.New(data, cfg.DeliverySigningKeys, logger).Run(runtimeContext)
 	api, err := httpapi.New(cfg, data, hub, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), logger)
 	if err != nil {
 		return err

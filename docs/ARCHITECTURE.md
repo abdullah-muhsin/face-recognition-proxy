@@ -39,9 +39,18 @@ denied at Nginx and additionally CIDR-checked by Go.
   been committed to PostgreSQL. It never broadcasts raw payloads.
 - `web`: Vue 3/Vite JavaScript application compiled into the Go container.
 
+## Event delivery
+
+`internal/delivery` signs exact event messages and runs a PostgreSQL-backed
+delivery worker independently of PushSDK request handling. Destination
+configuration and an outbox belong to `internal/store`; administration uses
+`internal/httpapi`. School rules and teacher mappings belong to the receiving
+application. See [Event delivery](EVENT-DELIVERY.md) for capture boundaries,
+receipt verification, retries and activation.
+
 ## Explicit non-features
 
-There is no secondary receiver, HTTP forwarding path, event-name remapping,
+There is no secondary device receiver, event-name remapping,
 digest auto-detection, protocol compatibility parser, inferred media type,
 database fallback, previous-challenge acceptance, or automatic terminal
 reconfiguration. Device events retain the exact source `eventList.data` value;

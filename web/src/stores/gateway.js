@@ -380,7 +380,35 @@ export const useGatewayStore = defineStore('gateway', () => {
     disconnectMonitor()
   }
 
+  function loadDeliveryConfiguration() {
+    return request('/api/v1/admin/delivery-configuration')
+  }
+  function saveDeliveryRoute(serial, data) {
+    return request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/delivery`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+    )
+  }
+  function loadEventDeliveries(offset = 0) {
+    return request(
+      `/api/v1/admin/event-deliveries?limit=${pageSize}&offset=${offset}`,
+    )
+  }
+  function retryEventDelivery(id) {
+    return request(`/api/v1/admin/event-deliveries/${id}/retry`, {
+      method: 'POST',
+    })
+  }
+
   return {
+    loadDeliveryConfiguration,
+    saveDeliveryRoute,
+    loadEventDeliveries,
+    retryEventDelivery,
     pageSize,
     initialized,
     authenticated,

@@ -130,3 +130,24 @@ func setRequiredEnvironment(t *testing.T, terminalsFile string) {
 	t.Setenv("METRICS_ALLOW_CIDRS", "127.0.0.1/32")
 	t.Setenv("PUSHSDK_TERMINAL_PASSWORD", "terminal-password")
 }
+
+func TestLoadDeliverySigningKeysRejectsMalformedConfiguration(t *testing.T) {
+	terminalsFile := filepath.Join(t.TempDir(), "terminals.json")
+	if err := os.WriteFile(terminalsFile, []byte(`[{"serialNumber":"DEVICE","pushSdkSerial":"PUSH","username":"gateway","passwordEnvironmentVariable":"PUSHSDK_TERMINAL_PASSWORD","loginPasswordDigest":"sha256","securityVersion":4,"commandIntervalSeconds":5,"errorDelaySeconds":30}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setRequiredEnvironment(t, terminalsFile)
+	key := strings.Repeat("a", 64)
+	for _, raw := range []string{"", "{}", `{"creative-minds":"` + key + `"}`} {
+		t.Setenv("DELIVERY_SIGNING_KEYS", raw)
+		if _, err := Load(); err != nil {
+			t.Fatalf("rejected valid signing configuration: %v", err)
+		}
+	}
+	for _, raw := range []string{"null", "[]", "not-json", `{"tenant":123}`, `{"tenant":null}`, `{"tenant":"short"}`, `{"tenant":"` + strings.ToUpper(key) + `"}`, `{" tenant":"` + key + `"}`} {
+		t.Setenv("DELIVERY_SIGNING_KEYS", raw)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DELIVERY_SIGNING_KEYS") {
+			t.Fatalf("accepted malformed signing configuration: %v", err)
+		}
+	}
+}
