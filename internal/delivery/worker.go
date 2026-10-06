@@ -115,13 +115,13 @@ func (w *Worker) send(ctx context.Context, d store.EventDelivery) (string, int, 
 		return "failed", code, "invalid_receipt"
 	}
 	var source store.EventMessage
-	if json.Unmarshal(d.Body, &source) != nil || !validReceipt(body, source.EventID) {
+	if json.Unmarshal(d.Body, &source) != nil || !validReceipt(body, source.EventID, source.SchemaVersion) {
 		return "failed", code, "invalid_receipt"
 	}
 	return "delivered", code, ""
 }
 
-func validReceipt(body []byte, eventID string) bool {
+func validReceipt(body []byte, eventID string, schemaVersion int) bool {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
@@ -138,7 +138,7 @@ func validReceipt(body []byte, eventID string) bool {
 		switch name {
 		case "schemaVersion":
 			var version int
-			if decoder.Decode(&version) != nil || version != 1 {
+			if decoder.Decode(&version) != nil || version != schemaVersion {
 				return false
 			}
 		case "eventId":

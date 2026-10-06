@@ -77,6 +77,8 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/admin/activity", s.withSession(s.gatewayActivity))
 	mux.HandleFunc("GET /api/v1/admin/delivery-configuration", s.withSession(s.deliveryConfiguration))
 	mux.HandleFunc("PUT /api/v1/admin/terminals/{serial}/delivery", s.withSession(s.saveDeliveryRoute))
+	mux.HandleFunc("DELETE /api/v1/admin/terminals/{serial}/delivery", s.withSession(s.deleteDeliveryRoute))
+	mux.HandleFunc("POST /api/v1/admin/terminals/{serial}/backfill/{action}", s.withSession(s.eventBackfill))
 	mux.HandleFunc("GET /api/v1/admin/event-deliveries", s.withSession(s.eventDeliveries))
 	mux.HandleFunc("POST /api/v1/admin/event-deliveries/{id}/retry", s.withSession(s.retryEventDelivery))
 	mux.HandleFunc("GET /ws/v1/monitor", s.withSession(s.monitorSocket))

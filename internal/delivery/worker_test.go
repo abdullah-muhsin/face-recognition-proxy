@@ -16,7 +16,7 @@ import (
 
 func TestDeliverySignatureAndReceipt(t *testing.T) {
 	key := strings.Repeat("a", 64)
-	body := []byte(`{"eventId":"exact-Event-007"}`)
+	body := []byte(`{"schemaVersion":1,"eventId":"exact-Event-007"}`)
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, _ := io.ReadAll(r.Body)
 		if string(got) != string(body) || r.Header.Get("X-PushSDK-Key-Id") != "tenant" || r.Header.Get("X-PushSDK-Signature") != Signature(key, r.Header.Get("X-PushSDK-Timestamp"), got) {
@@ -57,7 +57,7 @@ func TestDeliveryResponseClassification(t *testing.T) {
 			defer receiver.Close()
 			worker := New(nil, map[string]string{"tenant": strings.Repeat("a", 64)}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			worker.client.Transport = receiver.Client().Transport
-			status, code, _ := worker.send(context.Background(), store.EventDelivery{EndpointURL: receiver.URL, SigningKeyID: "tenant", Body: []byte(`{"eventId":"event"}`)})
+			status, code, _ := worker.send(context.Background(), store.EventDelivery{EndpointURL: receiver.URL, SigningKeyID: "tenant", Body: []byte(`{"schemaVersion":1,"eventId":"event"}`)})
 			if status != test.status || code != test.code {
 				t.Fatalf("result = %s/%d", status, code)
 			}
@@ -68,5 +68,14 @@ func TestDeliveryResponseClassification(t *testing.T) {
 func TestRetryDelayIsBounded(t *testing.T) {
 	if RetryDelay(1) != 5*time.Second || RetryDelay(2) != 10*time.Second || RetryDelay(100000) != 300*time.Second {
 		t.Fatal("invalid retry schedule")
+	}
+}
+
+func TestReceiptMustMatchMessageVersion(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		body := []byte(fmt.Sprintf(`{"schemaVersion":%d,"eventId":"event","receipt":"stored"}`, version))
+		if !validReceipt(body, "event", version) || validReceipt(body, "event", 3-version) {
+			t.Fatalf("receipt version not enforced: %d", version)
+		}
 	}
 }

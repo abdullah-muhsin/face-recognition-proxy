@@ -334,14 +334,26 @@ CREATE TABLE event_delivery_routes (
     terminal_serial_number TEXT PRIMARY KEY REFERENCES terminals(serial_number),
     endpoint_url TEXT NOT NULL,
     signing_key_id TEXT NOT NULL,
-    enabled_from TIMESTAMPTZ NOT NULL,
     enabled BOOLEAN NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by BIGINT NOT NULL REFERENCES admin_users(id)
 );
+CREATE TABLE event_delivery_backfills (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    terminal_serial_number TEXT NOT NULL REFERENCES terminals(serial_number),
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ NOT NULL CHECK (ends_at > starts_at),
+    preview_sha256 TEXT NOT NULL,
+    queued_count INTEGER NOT NULL CHECK (queued_count > 0),
+    created_by BIGINT NOT NULL REFERENCES admin_users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE event_deliveries (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    device_event_id BIGINT NOT NULL UNIQUE REFERENCES device_events(id),
+    device_event_id BIGINT UNIQUE REFERENCES device_events(id),
+    retained_event_id BIGINT UNIQUE REFERENCES retained_access_events(id),
+    backfill_id BIGINT REFERENCES event_delivery_backfills(id),
+    CONSTRAINT event_deliveries_source_check CHECK (num_nonnulls(device_event_id, retained_event_id) = 1),
     terminal_serial_number TEXT NOT NULL REFERENCES terminals(serial_number),
     endpoint_url TEXT NOT NULL,
     signing_key_id TEXT NOT NULL,

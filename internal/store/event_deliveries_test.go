@@ -51,7 +51,7 @@ func deliveryTestStore(t *testing.T) *Store {
 	if _, err = pool.Exec(ctx, `INSERT INTO admin_users (username,password_hash) VALUES ('admin','test')`); err != nil {
 		t.Fatal(err)
 	}
-	if err = data.SaveDeliveryRoute(ctx, DeliveryRoute{TerminalSerialNumber: "DEVICE", EndpointURL: "https://school.invalid/events", SigningKeyID: "tenant", EnabledFrom: time.Now().Add(-time.Hour), Enabled: true}, 1); err != nil {
+	if err = data.SaveDeliveryRoute(ctx, DeliveryRoute{TerminalSerialNumber: "DEVICE", EndpointURL: "https://school.invalid/events", SigningKeyID: "tenant", Enabled: true}, 1); err != nil {
 		t.Fatal(err)
 	}
 	return data
@@ -62,7 +62,7 @@ func faceEvent(id string, at time.Time) NewDeviceEvent {
 	return NewDeviceEvent{TerminalSerialNumber: "DEVICE", VendorEventID: id, DataFormat: "jsonData", PayloadBase64: base64.StdEncoding.EncodeToString([]byte(body))}
 }
 
-func TestDeliveryAtomicityDeduplicationCutoffAndImmutableDestination(t *testing.T) {
+func TestDeliveryAtomicityDeduplicationOldLiveScansAndImmutableDestination(t *testing.T) {
 	data := deliveryTestStore(t)
 	ctx := context.Background()
 	event := faceEvent("Exact-UUID", time.Now())
@@ -70,7 +70,7 @@ func TestDeliveryAtomicityDeduplicationCutoffAndImmutableDestination(t *testing.
 		t.Fatal(err)
 	}
 	rows, total, err := data.EventDeliveries(ctx, 25, 0)
-	if err != nil || total != 1 {
+	if err != nil || total != 2 {
 		t.Fatalf("deliveries: %d %v", total, err)
 	}
 	routes, _ := data.DeliveryRoutes(ctx)
@@ -80,12 +80,17 @@ func TestDeliveryAtomicityDeduplicationCutoffAndImmutableDestination(t *testing.
 		t.Fatalf("rerouted pending event: %v", err)
 	}
 	d, err := data.ClaimEventDelivery(ctx)
-	if err != nil || d == nil || d.ID != rows[0].ID || d.Attempts != 1 {
+	if err != nil || d == nil || d.ID != rows[1].ID || d.Attempts != 1 {
 		t.Fatalf("claim: %v %v", d, err)
 	}
 	var source EventMessage
 	if err = json.Unmarshal(d.Body, &source); err != nil || source.EventID != "Exact-UUID" || *source.EmployeeNumber != "007" {
 		t.Fatalf("source changed: %s %v", d.Body, err)
+	}
+	if next, err := data.ClaimEventDelivery(ctx); err != nil || next == nil {
+		t.Fatalf("old live scan was not queued: %v %v", next, err)
+	} else if err = data.FinishEventDelivery(ctx, *next, "delivered", 200, "", time.Now()); err != nil {
+		t.Fatal(err)
 	}
 	if next, err := data.ClaimEventDelivery(ctx); err != nil || next != nil {
 		t.Fatalf("live lease reclaimed: %v %v", next, err)
@@ -179,7 +184,7 @@ func TestDeliveryPauseAndTransientRetry(t *testing.T) {
 func TestDeliveryForwardMigration(t *testing.T) {
 	data := deliveryTestStore(t)
 	ctx := context.Background()
-	if _, err := data.pool.Exec(ctx, `DROP TABLE event_deliveries; DROP TABLE event_delivery_routes; DELETE FROM schema_migrations WHERE name='013_event_delivery.sql'`); err != nil {
+	if _, err := data.pool.Exec(ctx, `DROP TABLE event_deliveries; DROP TABLE event_delivery_backfills; DROP TABLE event_delivery_routes; DELETE FROM schema_migrations WHERE name IN ('013_event_delivery.sql','014_delivery_backfills.sql')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := data.Migrate(ctx, filepath.Join("..", "..", "db", "migrations")); err != nil {
@@ -215,10 +220,39 @@ func TestDeliveryCapturesMultipartFaceMetadataWithoutMedia(t *testing.T) {
 		t.Fatalf("multipart metadata changed: %v", err)
 	}
 	var fields map[string]any
-	if err = json.Unmarshal(d.Body, &fields); err != nil || len(fields) != 11 {
+	if err = json.Unmarshal(d.Body, &fields); err != nil || len(fields) != 12 {
 		t.Fatalf("unexpected delivery fields: %v", err)
 	}
 	if strings.Contains(string(d.Body), "private-image-bytes") || strings.Contains(string(d.Body), "Picture") {
 		t.Fatal("media escaped the archive")
+	}
+}
+
+func TestDestinationRemovalPreservesDeliveredHistoryAndBlocksUnfinishedWork(t *testing.T) {
+	data := deliveryTestStore(t)
+	ctx := context.Background()
+	if _, err := data.InsertDeviceEventBatch(ctx, []NewDeviceEvent{faceEvent("event", time.Now())}); err != nil {
+		t.Fatal(err)
+	}
+	if err := data.DeleteDeliveryRoute(ctx, "DEVICE", 1); !errors.Is(err, ErrDeliveryRouteUnfinished) {
+		t.Fatalf("removed route with pending work: %v", err)
+	}
+	d, err := data.ClaimEventDelivery(ctx)
+	if err != nil || d == nil {
+		t.Fatal(err)
+	}
+	if err = data.FinishEventDelivery(ctx, *d, "delivered", 200, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err = data.DeleteDeliveryRoute(ctx, "DEVICE", 1); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := data.DeliveryRoutes(ctx)
+	if err != nil || len(routes) != 0 {
+		t.Fatal("destination retained")
+	}
+	deliveries, total, err := data.EventDeliveries(ctx, 25, 0)
+	if err != nil || total != 1 || deliveries[0].Status != "delivered" {
+		t.Fatal("delivery audit lost")
 	}
 }

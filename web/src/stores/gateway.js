@@ -393,9 +393,35 @@ export const useGatewayStore = defineStore('gateway', () => {
       },
     )
   }
+  function deleteDeliveryRoute(serial) {
+    return request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/delivery`,
+      { method: 'DELETE' },
+    )
+  }
   function loadEventDeliveries(offset = 0) {
     return request(
       `/api/v1/admin/event-deliveries?limit=${pageSize}&offset=${offset}`,
+    )
+  }
+  function previewEventBackfill(serial, data) {
+    return request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/backfill/preview`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+    )
+  }
+  function queueEventBackfill(serial, data) {
+    return request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/backfill/queue`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
     )
   }
   function retryEventDelivery(id) {
@@ -405,8 +431,11 @@ export const useGatewayStore = defineStore('gateway', () => {
   }
 
   return {
+    previewEventBackfill,
+    queueEventBackfill,
     loadDeliveryConfiguration,
     saveDeliveryRoute,
+    deleteDeliveryRoute,
     loadEventDeliveries,
     retryEventDelivery,
     pageSize,
