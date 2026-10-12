@@ -59,3 +59,14 @@ omitting the optional `dataFormat` member. The gateway records that absence as
 received. The reconciliation workflow validates the retained raw bytes against
 the AcsEvent JSON contract; it does not assign an absent format or alter the
 source bytes.
+
+
+## Current clock and session configuration
+
+On 2026-10-12 the terminal accepted NTP mode, server `162.159.200.1:123`, a
+60-minute synchronization interval, and `Asia/Baghdad` (`AST-3:00:00`). The NTP
+server configuration was read back and subsequent event times matched server
+receipt time. Final `GET /ISAPI/System/time` readback remains pending physical
+reconnection. Inactivity now marks the terminal offline while retaining its
+latest authentication checkpoint. A valid returning request resumes the session.
+See [the clock and session investigation](../SESSION-DIAGNOSTICS.md).

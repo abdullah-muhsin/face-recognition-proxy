@@ -162,3 +162,21 @@ and preservation of idle checkpoints. `go vet` and frontend formatting, lint,
 and build checks passed. Protocol tests exercise a 24-hour idle period, restart
 recovery, fresh AuthInfo replacement, used-proof rejection, logout, changed
 configuration, late Login, and incomplete-handshake expiry.
+
+
+## Cleanup after deployment
+
+Release `e0a96369351b` removes unused restoration counters and obsolete
+conditional branches, and names the remaining expiry path explicitly for the
+initial login challenge. Go race tests, real PostgreSQL transaction tests, and
+`go vet` passed before deployment; production readiness passed afterward.
+
+On 2026-10-12, 31 older production source directories and the temporary command
+runner were removed. The active release and three rollback versions were kept.
+The 24 diagnostic evidence files were consolidated and checksum-verified in the
+private archive
+`/home/abdullah/services/deployments/pushsdk-gateway/production/incidents/2026-10-12-clock-and-session.tar.gz`.
+The cleanup manifest is beside it under `maintenance/2026-10-12-cleanup.json`.
+Database records, protected configuration, and normal operational logs were
+retained. Physical reconnection and the final time readback remain pending the
+user's terminal restart.

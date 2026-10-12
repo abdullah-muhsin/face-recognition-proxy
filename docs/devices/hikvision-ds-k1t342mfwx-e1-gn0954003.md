@@ -20,7 +20,7 @@ passwords belong exclusively in protected runtime secret files.
 | Production date | `2026-01-06` | `GET /ISAPI/System/deviceInfo` |
 | Ethernet MAC address | `88:DE:39:5D:B6:05` | `GET /ISAPI/System/deviceInfo` and network interface `1` |
 | Wi-Fi MAC address | `0C:CD:B4:40:62:12` | `GET /ISAPI/System/Network/interfaces`, interface `2` |
-| Local time zone | `Asia/Shanghai` (`UTC+08:00`) | `GET /ISAPI/System/time` |
+| Configured time zone | `Asia/Baghdad` (`UTC+03:00`, `AST-3:00:00`) | Accepted `PUT /ISAPI/System/time` on 2026-10-12; post-change event timestamps matched Baghdad time |
 
 Network addresses are intentionally not retained as terminal identity. Wi-Fi
 allocation can change; the serial numbers and MAC addresses above are the
@@ -51,8 +51,9 @@ Configure the terminal only through
 
 The terminal mapping must be present in the protected `terminals.json` before
 PushSDK is enabled. At gateway startup, `SeedConfiguredTerminals` records the
-canonical identity and begins it in `offline` state. A successful `AuthInfo`
-and `Login` exchange is the only path to `online`.
+canonical identity and begins it in `offline` state. A valid request using a
+retained authentication checkpoint or a successful `AuthInfo`/`Login` exchange
+restores `online` state. Inactivity alone does not revoke authentication.
 
 This configuration was accepted by the terminal on 2026-09-02. It then
 reported `online` and the gateway recorded `AuthInfo` and `Login` at security
@@ -122,3 +123,12 @@ The terminal completed it, and its retained response bytes confirmed model
 omitted `dataFormat` from that command result; the gateway records that exact
 absence (`responseDataFormatDeclared: false`) while retaining the response
 bytes. It does not infer or rewrite a response format.
+
+
+## Current clock configuration
+
+On 2026-10-12 the terminal accepted NTP mode, server `162.159.200.1:123`, a
+60-minute synchronization interval, and the Baghdad time zone. The NTP server
+configuration was read back successfully and subsequent event times matched
+server receipt time. Final `GET /ISAPI/System/time` readback is still pending
+physical reconnection; see [the clock and session investigation](../SESSION-DIAGNOSTICS.md).
