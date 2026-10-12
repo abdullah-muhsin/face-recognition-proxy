@@ -20,7 +20,7 @@ type Session struct {
 	CreatedAt       time.Time
 	NextChallengeAt time.Time
 	Authenticated   bool
-	Restored        bool
+	Online          bool // Process-local liveness; authentication survives idle periods.
 	mu              sync.Mutex
 }
 
@@ -43,16 +43,16 @@ type Sessions struct {
 func NewSessions() *Sessions { return &Sessions{entries: make(map[string]*Session)} }
 
 type SessionStart struct {
-	Session                      *Session
-	Previous                     *Session
-	ReplacedAuthenticatedSession bool
+	Session               *Session
+	Previous              *Session
+	ReplacedOnlineSession bool
 }
 
 const keyDerivationIterations = 4096
 
-// A successfully authenticated terminal may resume after a short network pause
-// without starting a new login. This gateway inactivity policy is independent
-// of the command polling interval and the initial login challenge deadline.
+// This is a liveness threshold, not a credential expiration. The latest
+// authenticated challenge remains valid until used, replaced by AuthInfo,
+// revoked by Logout, or invalidated by a terminal configuration change.
 const sessionIdleTimeout = time.Minute
 
 func (s *Sessions) Start(terminal config.Terminal, mode PayloadMode) (SessionStart, error) {
@@ -71,13 +71,13 @@ func (s *Sessions) Start(terminal config.Terminal, mode PayloadMode) (SessionSta
 	previous := s.entries[terminal.PushSDKSerial]
 	s.entries[terminal.PushSDKSerial] = session
 	s.mu.Unlock()
-	wasAuthenticated := false
+	wasOnline := false
 	if previous != nil {
 		previous.mu.Lock()
-		wasAuthenticated = previous.Authenticated
+		wasOnline = previous.Online
 		previous.mu.Unlock()
 	}
-	return SessionStart{Session: session, Previous: previous, ReplacedAuthenticatedSession: wasAuthenticated}, nil
+	return SessionStart{Session: session, Previous: previous, ReplacedOnlineSession: wasOnline}, nil
 }
 
 func (s *Sessions) Get(pushSDKSerial string) (*Session, bool) {
@@ -103,9 +103,9 @@ func (s *Sessions) Replace(pushSDKSerial string, session *Session) {
 	s.mu.Unlock()
 }
 
-// Restore loads only still-valid, configuration-matched session state. It is
-// sufficient to verify the next device request after a process restart, but it
-// never recreates a session after its login or inactivity deadline.
+// Restore retains configuration-matched authentication regardless of inactivity.
+// Restored sessions start offline until a valid request proves device contact.
+// Incomplete login challenges still expire at their original deadline.
 func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data interface {
 	PushSDKSessions(context.Context) ([]store.PushSDKSession, error)
 	DeletePushSDKSession(context.Context, string) error
@@ -132,12 +132,11 @@ func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data interfac
 			PayloadMode:    PayloadMode(stored.PayloadMode),
 			CreatedAt:      stored.CreatedAt,
 			Authenticated:  stored.Authenticated,
-			Restored:       stored.Authenticated,
 		}
 		if stored.NextChallengeAt != nil {
 			session.NextChallengeAt = *stored.NextChallengeAt
 		}
-		if (!session.Authenticated && session.LoginChallengeExpired(now)) || (session.Authenticated && session.NextChallengeExpired(now)) {
+		if !session.Authenticated && session.LoginChallengeExpired(now) {
 			if err := data.DeletePushSDKSession(ctx, stored.TerminalSerialNumber); err != nil {
 				return 0, err
 			}
@@ -157,7 +156,7 @@ func (s *Session) LoginChallengeExpired(now time.Time) bool {
 	return !now.Before(s.CreatedAt.Add(time.Duration(s.Terminal.CommandIntervalSeconds*3) * time.Second))
 }
 
-func (s *Session) NextChallengeExpired(now time.Time) bool {
+func (s *Session) IsIdle(now time.Time) bool {
 	return s.NextChallengeAt.IsZero() || !now.Before(s.NextChallengeAt.Add(sessionIdleTimeout))
 }
 

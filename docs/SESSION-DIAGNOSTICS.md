@@ -1,15 +1,18 @@
 # Terminal connection diagnosis
 
-`pushsdk.session_expired` means authenticated traffic stopped for the session's
-validity window. It does not identify why the terminal stopped contacting the
-gateway. Expiry changes gateway state; it does not send a disconnect or restart
-instruction to the device. A terminal initiates PushSDK HTTP requests, including
-reauthentication and command polling. The gateway cannot initiate an ISAPI
-exchange when that path is unavailable.
+`pushsdk.session_idle` means the terminal has sent no successful authenticated
+traffic for one minute. The gateway marks it offline but retains its latest
+challenge so the next valid request can resume without a new login. This does
+not identify why traffic stopped and sends no disconnect instruction.
+`pushsdk.session_expired` now applies only to incomplete login handshakes;
+historical entries from earlier releases also represent deleted authenticated
+sessions. A terminal initiates PushSDK HTTP requests, including command polling.
+The gateway cannot initiate an ISAPI exchange when that path is unavailable.
 
 ## Evidence to collect
 
-1. Compare each terminal's last successful exchange with its expiry activity.
+1. Compare each terminal's last successful exchange with its idle activity
+   (or expiry activity on older releases).
    Use server receipt times, not event timestamps from the device clock.
 2. Check `/var/log/nginx/pushsdk-gateway-access.log` for subsequent `AuthInfo`,
    `Login`, rejected requests, or requests from a different source address.
@@ -82,7 +85,82 @@ gateway to the correct VPS IPv4 address and had no AAAA record. The user confirm
 their computer was not currently on the school network. Device-side status and
 network evidence were still unavailable.
 
-Both terminals reported manual time, Asia/Shanghai, and clocks approximately
+During the initial inspection, both terminals reported manual time, Asia/Shanghai, and clocks approximately
 17 and 15 minutes ahead of UTC respectively. Their configured, inactive NTP
-server was a private LAN address. Clock correction remains pending a working
-command channel; no time or NTP settings were written during this investigation.
+server was a private LAN address. No time or NTP settings were written before
+the user restarted the devices and restored the command channel.
+
+## Clock correction after the 09:38 reconnect
+
+Both terminals authenticated successfully after the user's restart. They used
+a different shared public IP address. The user later said Wi-Fi might also have
+restarted, so the reconnect does not isolate the earlier outage to either the
+terminal software or the network.
+
+Native `PUSHCfg` readbacks confirmed both devices were enabled, using HTTPS to
+`vps.itplus.club:443`, and reporting online. GN0954003's interface readback showed
+Wi-Fi with DHCP and router-provided DNS. No network parameters were changed.
+
+Native ISAPI capabilities confirmed NTP configuration. The separate NTP test
+endpoint returned `notSupport` on both devices; it was not treated as a successful
+connectivity test. The configuration writes below returned native status code 1
+(`OK`), and NTP server readbacks matched the requested address, port and interval.
+
+| Setting | Both Creative Minds terminals |
+| --- | --- |
+| NTP server | `162.159.200.1`, UDP port `123` |
+| Synchronization interval | `60` minutes |
+| Time mode | `NTP` |
+| Time zone | `AST-3:00:00`, IANA `Asia/Baghdad` |
+
+| Observation | GN0953967 | GN0954003 |
+| --- | --- | --- |
+| Clock lead before correction | 1,017 seconds | 873 seconds |
+| Time configuration accepted | 09:41:53 | 09:48:21 |
+| Subsequent event timestamp / server receipt | 09:42:06 / 09:42:06.533 | 09:48:52 / 09:48:52.543 |
+| Session expiry after that last successful event | 09:42:23 (old policy) | 09:49:57 (new policy) |
+
+The accurate post-change event timestamps demonstrate clock synchronization.
+Both terminals stopped command polling after the backward correction. Subsequent
+event retries reached the gateway but received the invalid-session response;
+they did not immediately initiate `AuthInfo`. This is distinct from the earlier
+outage with no arriving traffic. A device polling timer affected by a backward
+clock step is a hypothesis to verify, not an established firmware diagnosis.
+
+At the user's request, release `9a2f9c61f8d8` changed authenticated-session
+inactivity expiry to 60 seconds, independently of the five-second polling
+interval. Initial login challenges retain their own deadline. Tests cover a
+30-second pause, restoring a checkpoint after that pause, expiry at 60 seconds,
+and fresh authentication replacing an unexpired session without accepting an old
+proof. Go tests with the race detector and `go vet` passed. GN0954003 resumed its
+persisted session at 09:47:40 after deployment, proving physical-device continuity
+through that gateway restart. Its later expiry after 64.811 seconds verifies the
+new inactivity threshold and five-second maintenance sweep in production.
+
+
+## Recovery policy correction after the clock change
+
+The post-NTP `Event` retries exposed a gateway lifecycle flaw: the inactivity
+sweep had deleted the challenge required to verify returning traffic. The
+terminals continued sending their existing proof rather than starting a new
+`AuthInfo` exchange. Increasing that deletion deadline to one minute delayed the
+failure but did not address it.
+
+The corrected policy separates liveness from authentication. One minute without
+contact marks an authenticated terminal offline and retains the latest exact
+challenge in PostgreSQL and memory. Returning traffic must prove that challenge;
+then normal rotation resumes. Initial login expiry, explicit logout, fresh
+AuthInfo replacement, and configuration invalidation still revoke the relevant
+state. Completed Login messages cannot be replayed to discard a valid session.
+
+Existing checkpoints deleted by the previous release remain unavailable and
+require one fresh device login. This policy cannot make a terminal send command
+polls when its own polling loop has stopped. The clock-step polling issue and
+real-device recovery must be verified independently of gateway unit tests.
+
+Validation before deployment: Go tests with the race detector passed with a
+real, disposable PostgreSQL 17 database, including transactional audit rollback
+and preservation of idle checkpoints. `go vet` and frontend formatting, lint,
+and build checks passed. Protocol tests exercise a 24-hour idle period, restart
+recovery, fresh AuthInfo replacement, used-proof rejection, logout, changed
+configuration, late Login, and incomplete-handshake expiry.

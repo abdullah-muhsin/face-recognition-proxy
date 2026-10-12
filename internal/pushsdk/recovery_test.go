@@ -27,6 +27,7 @@ type recoveryStore struct {
 	lastSeen     time.Time
 	activities   []activity.Event
 	expiryError  error
+	idleError    error
 }
 
 func (s *recoveryStore) PushSDKSessions(context.Context) ([]store.PushSDKSession, error) {
@@ -53,6 +54,9 @@ func (s *recoveryStore) RecordGatewayActivity(_ context.Context, event activity.
 	return event, nil
 }
 func (s *recoveryStore) TransitionTerminalState(ctx context.Context, _ string, status string, _ *string, event activity.Event) (activity.Event, error) {
+	if status == "offline" && s.idleError != nil {
+		return activity.Event{}, s.idleError
+	}
 	s.status = status
 	return s.RecordGatewayActivity(ctx, event)
 }
@@ -123,109 +127,115 @@ func assertActiveSessions(t *testing.T, svc *Service, want float64) {
 	}
 }
 
-func TestExpiredDeviceCanAuthenticateAgainWithoutGatewayReset(t *testing.T) {
+func TestIdleDeviceResumesWithLatestProof(t *testing.T) {
 	for _, proactive := range []bool{false, true} {
-		name := "on request"
+		name := "before sweep"
 		if proactive {
-			name = "silent device sweep"
-		}
-		t.Run(name, func(t *testing.T) {
-			svc, data, terminal := recoveryService(t)
-			oldAuth := loginRecoveryDevice(t, svc, terminal)
-			assertActiveSessions(t, svc, 1)
-			session, _ := svc.sessions.Get(terminal.PushSDKSerial)
-			session.NextChallengeAt = time.Now().Add(-61 * time.Second)
-			lastSeen := data.lastSeen
-			if proactive {
-				if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
-					t.Fatal(err)
-				}
-			}
-			response := sendRecoveryRequest(svc, "Event", `{"eventNum":0,"eventList":[]}`, oldAuth)
-			if response.Code != 401 || response.Header().Get("My-Custom-Challenge") != "" {
-				t.Fatalf("expired response: %d %v", response.Code, response.Header())
-			}
-			var failure successResponse
-			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
-				t.Fatal(err)
-			}
-			if failure.Code != invalidSessionCode {
-				t.Fatalf("failure = %#v", failure)
-			}
-			if data.status != "offline" || data.checkpoint != nil || !data.lastSeen.Equal(lastSeen) {
-				t.Fatalf("expiry retained stale online state: %#v", data)
-			}
-			assertActiveSessions(t, svc, 0)
-			if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
-				t.Fatal(err)
-			}
-			assertActiveSessions(t, svc, 0)
-			freshAuth := loginRecoveryDevice(t, svc, terminal)
-			// A stale retry must not destroy the new, authenticated session.
-			if got := sendRecoveryRequest(svc, "CommandRequest", "", oldAuth); got.Code != 401 {
-				t.Fatalf("old proof accepted: %d", got.Code)
-			}
-			if got := sendRecoveryRequest(svc, "CommandRequest", "", freshAuth); got.Code != 200 {
-				t.Fatalf("fresh poll rejected: %d %s", got.Code, got.Body)
-			}
-			if data.status != "online" || !data.lastSeen.After(lastSeen) {
-				t.Fatal("fresh authentication did not restore online/last seen")
-			}
-			assertActiveSessions(t, svc, 1)
-		})
-	}
-}
-
-func TestExpiryCommitFailureRetainsSessionForRetry(t *testing.T) {
-	svc, data, terminal := recoveryService(t)
-	loginRecoveryDevice(t, svc, terminal)
-	session, _ := svc.sessions.Get(terminal.PushSDKSerial)
-	session.NextChallengeAt = time.Now().Add(-61 * time.Second)
-	data.expiryError = errors.New("database unavailable")
-	if err := svc.ExpireSessions(context.Background(), time.Now()); err == nil {
-		t.Fatal("expiry failure lost")
-	}
-	if !session.Authenticated || data.checkpoint == nil || data.status != "online" {
-		t.Fatal("uncommitted expiry discarded session")
-	}
-	assertActiveSessions(t, svc, 1)
-	data.expiryError = nil
-	if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if data.status != "offline" || data.checkpoint != nil {
-		t.Fatal("expiry retry failed")
-	}
-	assertActiveSessions(t, svc, 0)
-}
-
-func TestDeviceResumesAfterThirtySecondPause(t *testing.T) {
-	for _, restart := range []bool{false, true} {
-		name := "running gateway"
-		if restart {
-			name = "restarted gateway"
+			name = "after idle sweep"
 		}
 		t.Run(name, func(t *testing.T) {
 			svc, data, terminal := recoveryService(t)
 			auth := loginRecoveryDevice(t, svc, terminal)
 			session, _ := svc.sessions.Get(terminal.PushSDKSerial)
-			session.NextChallengeAt = time.Now().Add(-30 * time.Second)
+			session.NextChallengeAt = time.Now().Add(-24 * time.Hour)
 			if err := svc.persistSession(context.Background(), session); err != nil {
 				t.Fatal(err)
 			}
-			if restart {
-				svc.sessions = NewSessions()
-				data.status = "offline"
-				if err := svc.RestoreSessions(context.Background()); err != nil {
+			lastSeen := data.lastSeen
+			if proactive {
+				if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
 					t.Fatal(err)
 				}
+				if data.status != "offline" || data.checkpoint == nil || !session.Authenticated || session.Online || !data.lastSeen.Equal(lastSeen) {
+					t.Fatal("idle transition did not preserve authentication and last contact")
+				}
+				assertActiveSessions(t, svc, 0)
+				activities := len(data.activities)
+				if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				if len(data.activities) != activities {
+					t.Fatal("duplicate idle transition")
+				}
 			}
-			if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
+			// Invalid traffic cannot restore contact or destroy the valid checkpoint.
+			status := data.status
+			challenge := session.NextChallenge
+			if got := sendRecoveryRequest(svc, "CommandRequest", "", strings.Repeat("0", 64)); got.Code != 401 {
+				t.Fatalf("invalid proof: %d", got.Code)
+			}
+			if data.status != status || !data.lastSeen.Equal(lastSeen) || data.checkpoint.NextChallenge != challenge {
+				t.Fatal("invalid proof changed state")
+			}
+			response := sendRecoveryRequest(svc, "CommandRequest", "", auth)
+			if response.Code != 200 || response.Header().Get("My-Custom-Challenge") == "" || response.Header().Get("My-Custom-Challenge") == challenge {
+				t.Fatalf("idle session did not resume and rotate challenge: %d", response.Code)
+			}
+			if data.status != "online" || !session.Online || !data.lastSeen.After(lastSeen) {
+				t.Fatal("resume did not restore contact")
+			}
+			assertActiveSessions(t, svc, 1)
+			// An already-used proof is rejected even after another long idle period.
+			session.NextChallengeAt = time.Now().Add(-24 * time.Hour)
+			if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if got := sendRecoveryRequest(svc, "CommandRequest", "", auth); got.Code != 401 {
+				t.Fatalf("used proof accepted: %d", got.Code)
+			}
+			if data.status != "offline" || session.Online {
+				t.Fatal("replay restored online state")
+			}
+			assertActiveSessions(t, svc, 0)
+		})
+	}
+}
+
+func TestIdleCommitFailureRetainsOnlineStateForRetry(t *testing.T) {
+	svc, data, terminal := recoveryService(t)
+	loginRecoveryDevice(t, svc, terminal)
+	session, _ := svc.sessions.Get(terminal.PushSDKSerial)
+	session.NextChallengeAt = time.Now().Add(-61 * time.Second)
+	data.idleError = errors.New("database unavailable")
+	if err := svc.MaintainSessions(context.Background(), time.Now()); err == nil {
+		t.Fatal("idle transition failure lost")
+	}
+	if !session.Authenticated || !session.Online || data.checkpoint == nil || data.status != "online" {
+		t.Fatal("uncommitted transition changed state")
+	}
+	assertActiveSessions(t, svc, 1)
+	data.idleError = nil
+	if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if data.status != "offline" || data.checkpoint == nil || !session.Authenticated || session.Online {
+		t.Fatal("idle retry failed")
+	}
+	assertActiveSessions(t, svc, 0)
+}
+
+func TestDeviceResumesAfterGatewayRestart(t *testing.T) {
+	for _, pause := range []time.Duration{30 * time.Second, 24 * time.Hour} {
+		t.Run(pause.String(), func(t *testing.T) {
+			svc, data, terminal := recoveryService(t)
+			auth := loginRecoveryDevice(t, svc, terminal)
+			session, _ := svc.sessions.Get(terminal.PushSDKSerial)
+			session.NextChallengeAt = time.Now().Add(-pause)
+			if err := svc.persistSession(context.Background(), session); err != nil {
+				t.Fatal(err)
+			}
+			svc.sessions = NewSessions()
+			data.status = "offline"
+			if err := svc.RestoreSessions(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			assertActiveSessions(t, svc, 0)
+			if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			response := sendRecoveryRequest(svc, "CommandRequest", "", auth)
 			if response.Code != 200 || response.Header().Get("My-Custom-Challenge") == "" {
-				t.Fatalf("valid session did not resume: %d %s", response.Code, response.Body)
+				t.Fatalf("restored session rejected: %d", response.Code)
 			}
 			if data.status != "online" || time.Since(data.lastSeen) > time.Second {
 				t.Fatal("successful poll did not renew online session")
@@ -235,26 +245,40 @@ func TestDeviceResumesAfterThirtySecondPause(t *testing.T) {
 	}
 }
 
-func TestFreshAuthenticationReplacesUnexpiredSession(t *testing.T) {
-	svc, data, terminal := recoveryService(t)
-	oldAuth := loginRecoveryDevice(t, svc, terminal)
-	previous, _ := svc.sessions.Get(terminal.PushSDKSerial)
-	freshAuth := loginRecoveryDevice(t, svc, terminal)
-	current, _ := svc.sessions.Get(terminal.PushSDKSerial)
-	if current == previous || current.Salt == previous.Salt {
-		t.Fatal("fresh authentication did not replace the live session")
+func TestFreshAuthenticationReplacesExistingSession(t *testing.T) {
+	for _, idle := range []bool{false, true} {
+		name := "online"
+		if idle {
+			name = "idle"
+		}
+		t.Run(name, func(t *testing.T) {
+			svc, data, terminal := recoveryService(t)
+			oldAuth := loginRecoveryDevice(t, svc, terminal)
+			previous, _ := svc.sessions.Get(terminal.PushSDKSerial)
+			if idle {
+				previous.NextChallengeAt = time.Now().Add(-time.Hour)
+				if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			freshAuth := loginRecoveryDevice(t, svc, terminal)
+			current, _ := svc.sessions.Get(terminal.PushSDKSerial)
+			if current == previous || current.Salt == previous.Salt {
+				t.Fatal("fresh authentication did not replace session")
+			}
+			assertActiveSessions(t, svc, 1)
+			if response := sendRecoveryRequest(svc, "CommandRequest", "", oldAuth); response.Code != 401 {
+				t.Fatalf("old proof accepted: %d", response.Code)
+			}
+			if response := sendRecoveryRequest(svc, "CommandRequest", "", freshAuth); response.Code != 200 {
+				t.Fatalf("old retry disrupted new session: %d", response.Code)
+			}
+			if data.status != "online" || data.checkpoint == nil {
+				t.Fatal("replacement session lost")
+			}
+			assertActiveSessions(t, svc, 1)
+		})
 	}
-	assertActiveSessions(t, svc, 1)
-	if response := sendRecoveryRequest(svc, "CommandRequest", "", oldAuth); response.Code != 401 {
-		t.Fatalf("old authentication proof accepted: %d", response.Code)
-	}
-	if response := sendRecoveryRequest(svc, "CommandRequest", "", freshAuth); response.Code != 200 {
-		t.Fatalf("old request disrupted fresh session: %d %s", response.Code, response.Body)
-	}
-	if data.status != "online" || data.checkpoint == nil {
-		t.Fatal("replacement session lost its online state or checkpoint")
-	}
-	assertActiveSessions(t, svc, 1)
 }
 
 func TestMaintenanceDoesNotInterruptAnActiveExchange(t *testing.T) {
@@ -264,17 +288,97 @@ func TestMaintenanceDoesNotInterruptAnActiveExchange(t *testing.T) {
 	session.NextChallengeAt = time.Now().Add(-61 * time.Second)
 	lock := svc.terminalLocks[terminal.PushSDKSerial]
 	lock.Lock()
-	if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
+	if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	lock.Unlock()
 	if data.status != "online" {
-		t.Fatal("maintenance expired an in-flight exchange")
+		t.Fatal("maintenance interrupted an in-flight exchange")
 	}
-	if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
+	if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if data.status != "offline" {
-		t.Fatal("maintenance did not expire idle session")
+	if data.status != "offline" || data.checkpoint == nil {
+		t.Fatal("idle checkpoint was not retained")
 	}
+}
+
+func TestLogoutRevokesIdleSession(t *testing.T) {
+	svc, data, terminal := recoveryService(t)
+	auth := loginRecoveryDevice(t, svc, terminal)
+	session, _ := svc.sessions.Get(terminal.PushSDKSerial)
+	session.NextChallengeAt = time.Now().Add(-time.Hour)
+	if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := sendRecoveryRequest(svc, "Logout", "", auth); got.Code != 200 {
+		t.Fatalf("logout: %d", got.Code)
+	}
+	if data.checkpoint != nil || data.status != "offline" {
+		t.Fatal("logout did not revoke session")
+	}
+	if got := sendRecoveryRequest(svc, "CommandRequest", "", auth); got.Code != 401 {
+		t.Fatalf("revoked proof accepted: %d", got.Code)
+	}
+	assertActiveSessions(t, svc, 0)
+}
+
+func TestLateLoginCannotDiscardAuthenticatedSession(t *testing.T) {
+	svc, data, terminal := recoveryService(t)
+	auth := loginRecoveryDevice(t, svc, terminal)
+	session, _ := svc.sessions.Get(terminal.PushSDKSerial)
+	session.CreatedAt = time.Now().Add(-time.Hour)
+	if got := sendRecoveryRequest(svc, "Login", `{}`, ""); got.Code != 401 {
+		t.Fatalf("late login: %d", got.Code)
+	}
+	if data.checkpoint == nil || !session.Authenticated {
+		t.Fatal("late login discarded valid authentication")
+	}
+	if got := sendRecoveryRequest(svc, "CommandRequest", "", auth); got.Code != 200 {
+		t.Fatalf("valid proof rejected: %d", got.Code)
+	}
+	assertActiveSessions(t, svc, 1)
+}
+
+func TestIncompleteLoginStillExpires(t *testing.T) {
+	for _, sweep := range []bool{false, true} {
+		t.Run(map[bool]string{false: "on request", true: "sweep"}[sweep], func(t *testing.T) {
+			svc, data, terminal := recoveryService(t)
+			if got := sendRecoveryRequest(svc, "AuthInfo", "", ""); got.Code != 200 {
+				t.Fatalf("AuthInfo: %d", got.Code)
+			}
+			session, _ := svc.sessions.Get(terminal.PushSDKSerial)
+			session.CreatedAt = time.Now().Add(-16 * time.Second)
+			if sweep {
+				if err := svc.MaintainSessions(context.Background(), time.Now()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := sendRecoveryRequest(svc, "Login", `{}`, ""); got.Code != 401 {
+				t.Fatalf("expired login: %d", got.Code)
+			}
+			if data.checkpoint != nil || data.status != "offline" {
+				t.Fatal("expired handshake retained")
+			}
+			assertActiveSessions(t, svc, 0)
+		})
+	}
+}
+
+func TestChangedConfigurationRevokesPersistedSession(t *testing.T) {
+	svc, data, terminal := recoveryService(t)
+	auth := loginRecoveryDevice(t, svc, terminal)
+	svc.config.Terminals[0].Password = "changed-password"
+	svc.sessions = NewSessions()
+	data.status = "offline"
+	if err := svc.RestoreSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if data.checkpoint != nil {
+		t.Fatal("checkpoint with old credentials restored")
+	}
+	if got := sendRecoveryRequest(svc, "CommandRequest", "", auth); got.Code != 401 {
+		t.Fatalf("old credentials accepted: %d", got.Code)
+	}
+	assertActiveSessions(t, svc, 0)
 }

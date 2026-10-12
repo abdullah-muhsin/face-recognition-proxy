@@ -57,44 +57,42 @@ online registration before continuing.
 The gateway checkpoints every negotiated session before replying to the
 terminal. The checkpoint contains no terminal password: only the payload mode,
 server-generated salt and challenge values, their timestamps, iteration count,
-and an exact configuration fingerprint. At startup, it restores a checkpoint
-only when the terminal configuration still matches and the most recent
-challenge is younger than the gateway's 60-second inactivity window.
-The first valid request proves that continuity and records
-`pushsdk.session_resumed` before the next challenge is issued.
+and an exact configuration fingerprint. At startup it restores authenticated
+checkpoints whose configuration still matches, regardless of idle duration.
+Restoration alone does not mark a terminal online. The first valid request
+records `pushsdk.session_resumed` and normal challenge rotation continues.
 
-If the outage exceeds that inactivity window, or the configured PushSDK contract
-changes, the checkpoint is deleted. The corresponding request receives the
-documented `401` invalid-session envelope (`0x0020000f`, `Invalid SessionID.`)
-without a next challenge. A conforming terminal then performs `AuthInfo` and
-`Login`; the gateway never replays or guesses a challenge and never changes
-terminal configuration automatically.
+The gateway checks contact every five seconds. After 60 seconds without a
+successful authenticated exchange, it marks the terminal offline and records
+`pushsdk.session_idle` atomically. The authentication checkpoint stays in memory
+and PostgreSQL. Repeated maintenance does not duplicate the idle activity.
+`last_seen_at` remains the last successful contact; the idle transition and
+rejected proofs do not advance it. The console refreshes on idle/resume activity,
+and `pushsdk_sessions_active` counts online authenticated sessions.
 
-The gateway checks idle sessions every five seconds. An expired session is
-removed from memory and PostgreSQL, and its terminal becomes `offline` with a
-`pushsdk.session_expired` activity. The database transition and checkpoint
-deletion commit together. `last_seen_at` records the latest successfully
-authenticated exchange; expiry and rejected retries do not advance it. The
-console refreshes its terminal snapshot when it receives the expiry activity.
+Only the latest issued challenge is accepted. A correctly authenticated request
+after an idle period restores online status, and its successful response issues
+the next challenge. There is no cache accepting older or already-used proofs.
+The initial, unauthenticated login challenge keeps its separate
+three-command-interval deadline and is deleted when it expires.
 
-Authenticated requests expire at 60 seconds since the last successful exchange;
-the sweep marks a silent device offline within the following five seconds.
-Polling remains at its configured interval. The initial, unauthenticated login
-challenge keeps its separate three-command-interval deadline.
-
-All exchanges for one terminal, including `AuthInfo` replacement and response
-writing, are serialized. A stale request with the wrong authentication proof
-receives `401` but cannot delete a newer, valid session. A device can start a
-fresh `AuthInfo`/`Login` exchange without a gateway restart or inventory change.
+Fresh `AuthInfo` replaces an existing online or idle session immediately.
+`Logout`, removal of the configured terminal, and changes to its exact protocol
+configuration revoke persisted authentication. All exchanges for one terminal,
+including replacement and response writing, are serialized. A stale request
+receives `401` but cannot delete a newer session; replaying `Login` after its
+completion also cannot rotate or discard that session.
 
 If the device repeats `Event` requests with `401` and never sends `AuthInfo`,
 automatic recovery has not completed. Check the safe `reason` field in rejection
-activity (`missing_session`, `next_challenge_expired`, or `custom_auth_mismatch`).
+activity (`missing_session`, `not_authenticated`, or `custom_auth_mismatch`).
 The March 2026 Hikvision demo's `HandleCommonResponse` uses the same three-field
 invalid-session response for authenticated operations. Its lock/retry fields
 belong to login failures; they are not a documented event-recovery mechanism.
-Do not claim firmware recovery from a gateway unit test: verify a fresh login
-and successful command polling from the physical device after an interruption.
+A checkpoint already deleted by an older release cannot be reconstructed from
+an incoming proof; one fresh `AuthInfo`/`Login` exchange is required in that case.
+Do not claim firmware recovery from a gateway unit test: verify successful
+command polling from the physical device after an interruption.
 
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a

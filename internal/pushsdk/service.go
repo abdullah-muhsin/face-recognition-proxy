@@ -59,11 +59,12 @@ func NewService(cfg config.Config, data serviceStore, hub *monitor.Hub, metrics 
 }
 
 func (s *Service) RestoreSessions(ctx context.Context) error {
-	restored, err := s.sessions.Restore(ctx, s.config, s.store, time.Now().UTC())
+	_, err := s.sessions.Restore(ctx, s.config, s.store, time.Now().UTC())
 	if err != nil {
 		return err
 	}
-	s.metrics.SessionsActive.Set(float64(restored))
+	// A checkpoint proves authentication continuity, not current reachability.
+	s.metrics.SessionsActive.Set(0)
 	return nil
 }
 
@@ -91,8 +92,8 @@ func (s *Service) MaintainISAPICommandDeadlines(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.ExpireSessions(ctx, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
-				s.logger.Error("expire PushSDK sessions", "error", err)
+			if err := s.MaintainSessions(ctx, time.Now().UTC()); err != nil && !errors.Is(err, context.Canceled) {
+				s.logger.Error("maintain PushSDK sessions", "error", err)
 			}
 			if err := s.ExpireISAPICommandDeadlines(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				s.logger.Error("reconcile ISAPI command deadlines", "error", err)
@@ -101,9 +102,9 @@ func (s *Service) MaintainISAPICommandDeadlines(ctx context.Context) {
 	}
 }
 
-// ExpireSessions also handles silent devices: no later request is needed to
-// mark a dead session offline. Requests for other terminals remain independent.
-func (s *Service) ExpireSessions(ctx context.Context, now time.Time) error {
+// MaintainSessions marks silent authenticated devices offline without revoking
+// their latest challenge, and expires incomplete login handshakes.
+func (s *Service) MaintainSessions(ctx context.Context, now time.Time) error {
 	var failures []error
 	for _, terminal := range s.config.Terminals {
 		lock := s.terminalLocks[terminal.PushSDKSerial]
@@ -113,7 +114,11 @@ func (s *Service) ExpireSessions(ctx context.Context, now time.Time) error {
 		session, found := s.sessions.Get(terminal.PushSDKSerial)
 		if found {
 			session.mu.Lock()
-			if (session.Authenticated && session.NextChallengeExpired(now)) || (!session.Authenticated && session.LoginChallengeExpired(now)) {
+			if session.Authenticated && session.Online && session.IsIdle(now) {
+				if err := s.markSessionIdle(ctx, terminal, session); err != nil {
+					failures = append(failures, err)
+				}
+			} else if !session.Authenticated && session.LoginChallengeExpired(now) {
 				if err := s.expireSession(ctx, terminal, session); err != nil {
 					failures = append(failures, err)
 				}
@@ -125,17 +130,36 @@ func (s *Service) ExpireSessions(ctx context.Context, now time.Time) error {
 	return errors.Join(failures...)
 }
 
+// Caller holds the terminal and session locks. Only committed offline state
+// changes liveness in memory; the authentication checkpoint stays untouched.
+func (s *Service) markSessionIdle(ctx context.Context, terminal config.Terminal, session *Session) error {
+	stored, err := s.store.TransitionTerminalState(ctx, terminal.SerialNumber, "offline", nil, activity.Event{
+		Kind: activity.KindPushSDKSessionIdle, Terminal: terminal.SerialNumber,
+		Message: "no authenticated PushSDK traffic for one minute; waiting for the terminal to resume",
+	})
+	if err != nil {
+		return err
+	}
+	session.Online = false
+	s.metrics.SessionsActive.Dec()
+	s.hub.Publish(stored)
+	return nil
+}
+
 // Caller holds the terminal lock and, when present, the session lock. Commit
 // the offline state and session deletion together before removing memory state.
 func (s *Service) expireSession(ctx context.Context, terminal config.Terminal, session *Session) error {
-	stored, err := s.store.ExpirePushSDKSession(ctx, terminal.SerialNumber, "PushSDK session expired; waiting for device authentication")
+	stored, err := s.store.ExpirePushSDKSession(ctx, terminal.SerialNumber, "PushSDK login challenge expired; waiting for device authentication")
 	if err != nil {
 		return err
 	}
 	s.sessions.Remove(terminal.PushSDKSerial)
-	if session != nil && session.Authenticated {
+	if session != nil {
 		session.Authenticated = false
-		s.metrics.SessionsActive.Dec()
+		if session.Online {
+			session.Online = false
+			s.metrics.SessionsActive.Dec()
+		}
 	}
 	if stored != nil {
 		s.hub.Publish(*stored)
@@ -331,7 +355,7 @@ func (s *Service) authInfo(ctx context.Context, terminal config.Terminal, body [
 		}
 		return protocolResponse{}, err
 	}
-	if started.ReplacedAuthenticatedSession {
+	if started.ReplacedOnlineSession {
 		s.metrics.SessionsActive.Dec()
 	}
 	data := authInfoResponseData{Challenge: session.LoginChallenge, Salt: session.Salt, Iterations: session.Iterations, IsDataEncrypted: mode.IsEncrypted()}
@@ -394,6 +418,11 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	}
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	// A completed login cannot be replayed to rotate or discard a live or idle
+	// authenticated session. Starting a new handshake requires AuthInfo.
+	if session.Authenticated {
+		return protocolResponse{}, nil, invalidSession("login_already_completed")
+	}
 	if session.LoginChallengeExpired(time.Now().UTC()) {
 		if err := s.expireSession(ctx, terminal, session); err != nil {
 			return protocolResponse{}, nil, err
@@ -447,6 +476,7 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		return protocolResponse{}, nil, err
 	}
 	if !previousAuthenticated {
+		session.Online = true
 		s.metrics.SessionsActive.Inc()
 	}
 	s.hub.Publish(storedActivity)
@@ -471,16 +501,10 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 	if !session.Authenticated {
 		return protocolResponse{}, nil, invalidSession("not_authenticated")
 	}
-	if session.NextChallengeExpired(time.Now().UTC()) {
-		if err := s.expireSession(ctx, terminal, session); err != nil {
-			return protocolResponse{}, nil, err
-		}
-		return protocolResponse{}, nil, invalidSession("next_challenge_expired")
-	}
 	if !constantTimeEqual(request.Header.Get("My-Custom-Auth"), expectedCustomAuth(terminal, session.Salt, session.NextChallenge)) {
 		return protocolResponse{}, nil, invalidSession("custom_auth_mismatch")
 	}
-	if session.Restored {
+	if !session.Online {
 		storedActivity, err := s.store.TransitionTerminalState(
 			ctx,
 			terminal.SerialNumber,
@@ -489,13 +513,14 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 			activity.Event{
 				Kind:     activity.KindPushSDKSessionResumed,
 				Terminal: terminal.SerialNumber,
-				Message:  "terminal resumed its persisted PushSDK session",
+				Message:  "terminal resumed its authenticated PushSDK session",
 			},
 		)
 		if err != nil {
 			return protocolResponse{}, nil, err
 		}
-		session.Restored = false
+		session.Online = true
+		s.metrics.SessionsActive.Inc()
 		s.hub.Publish(storedActivity)
 	}
 	requiresBody := action == "CommandResult" || action == "Event"
@@ -561,6 +586,7 @@ func (s *Service) authenticated(ctx context.Context, terminal config.Terminal, a
 		// AuthInfo will replace this no-longer-authenticated session when the
 		// terminal connects again.
 		session.Authenticated = false
+		session.Online = false
 		s.metrics.SessionsActive.Dec()
 		s.hub.Publish(storedActivity)
 		result = protocolResponse{Body: succeeded()}

@@ -81,18 +81,25 @@ The PushSDK session checkpoint contains only the negotiated payload mode,
 server-issued salt and challenges, iteration count, timestamps, and a hash of
 the exact terminal protocol configuration. It never contains a terminal
 password. The gateway commits the next challenge before sending each successful
-response. On startup it restores only a configuration-matched checkpoint that
-is still inside the gateway's 60-second authenticated-session inactivity window. This
-allows a normal short gateway restart to continue the existing session without
-turning PushSDK off and on at the terminal. An expired or changed session is
-deleted and receives the documented invalid-session response; the gateway never
-guesses a challenge or changes terminal configuration.
+response. On startup it restores configuration-matched authenticated checkpoints,
+including those retained through an extended offline period. Terminals start
+offline and become online only when their next request proves possession of the
+latest challenge. No password, challenge, or past authentication proof is guessed.
 
 The device still polls every configured command interval (five seconds for the
-installed terminals). Each successful authenticated exchange renews the
-60-second inactivity deadline. The initial login challenge retains its separate
-three-command-interval deadline. Fresh `AuthInfo` replaces an existing session
-immediately; the terminal does not have to wait for inactivity expiry.
+installed terminals). After 60 seconds without a successful authenticated
+exchange, the maintenance sweep marks it offline and records
+`pushsdk.session_idle`, preserving its latest authentication checkpoint. A valid
+request resumes the session and rotates the challenge normally. Connection
+health and authentication validity are separate: silence does not revoke the
+credentials needed to resume. `pushsdk_sessions_active` counts online sessions.
+
+The initial login challenge keeps its three-command-interval deadline. Fresh
+`AuthInfo` immediately replaces an existing online or idle session. `Logout` and
+changes to the exact configured terminal contract revoke the checkpoint. An
+already-used proof or one from a replaced session receives `401` and cannot
+modify the current session. A completed `Login` cannot be replayed; a new login
+must begin with `AuthInfo`.
 
 ## Strict PushSDK contract
 
@@ -270,8 +277,9 @@ Run `make test` and `make vet` to verify the Go service with the same Go 1.24
 toolchain used by the production image. They explicitly test the gateway's Go
 source roots so ignored frontend dependencies cannot affect the result.
 
-Session recovery tests cover expiry, a fresh login after rejection, and delayed
-requests from an old session. To also run the PostgreSQL transaction test, set
+Session recovery tests cover long idle periods, gateway restarts, fresh login
+replacement, replay rejection, logout, configuration changes, and handshake
+expiry. To also run the PostgreSQL transaction tests, set
 `GATEWAY_TEST_DATABASE_URL` when running `go test ./internal/store`; it creates
 and removes a dedicated test schema in that database.
 

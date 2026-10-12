@@ -16,7 +16,7 @@ func NewMetrics(registerer prometheus.Registerer) *Metrics {
 		EventsReceived:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "pushsdk_events_received_total", Help: "Vendor events received by data format."}, []string{"format"}),
 		EventsPersisted: prometheus.NewCounter(prometheus.CounterOpts{Name: "pushsdk_device_events_persisted_total", Help: "Device event payloads durably persisted."}),
 		EventsRejected:  prometheus.NewCounter(prometheus.CounterOpts{Name: "pushsdk_events_rejected_total", Help: "Event batches rejected for protocol or persistence errors."}),
-		SessionsActive:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "pushsdk_sessions_active", Help: "Authenticated PushSDK terminal sessions in this gateway process."}),
+		SessionsActive:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "pushsdk_sessions_active", Help: "Online authenticated PushSDK terminal sessions in this gateway process."}),
 	}
 	registerer.MustRegister(metrics.Requests, metrics.EventsReceived, metrics.EventsPersisted, metrics.EventsRejected, metrics.SessionsActive)
 	return metrics

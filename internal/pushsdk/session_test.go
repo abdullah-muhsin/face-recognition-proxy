@@ -90,18 +90,18 @@ func TestLoginChallengeExpiryUsesExactDeadline(t *testing.T) {
 	}
 }
 
-func TestAuthenticatedSessionExpiresAfterOneMinute(t *testing.T) {
+func TestSessionBecomesIdleAfterOneMinute(t *testing.T) {
 	lastExchange := time.Date(2026, time.October, 12, 6, 0, 0, 0, time.UTC)
 	for _, pollSeconds := range []int{5, 20, 60} {
 		session := &Session{Terminal: config.Terminal{CommandIntervalSeconds: pollSeconds}, NextChallengeAt: lastExchange}
-		if session.NextChallengeExpired(lastExchange.Add(time.Minute - time.Nanosecond)) {
-			t.Fatalf("poll interval %d: session expired before one minute", pollSeconds)
+		if session.IsIdle(lastExchange.Add(time.Minute - time.Nanosecond)) {
+			t.Fatalf("poll interval %d: session idle before one minute", pollSeconds)
 		}
-		if !session.NextChallengeExpired(lastExchange.Add(time.Minute)) {
-			t.Fatalf("poll interval %d: session remained valid at one minute", pollSeconds)
+		if !session.IsIdle(lastExchange.Add(time.Minute)) {
+			t.Fatalf("poll interval %d: session not idle at one minute", pollSeconds)
 		}
 	}
-	if !(&Session{}).NextChallengeExpired(lastExchange) {
-		t.Fatal("session without a challenge timestamp remained valid")
+	if !(&Session{}).IsIdle(lastExchange) {
+		t.Fatal("session without a challenge timestamp not idle")
 	}
 }
