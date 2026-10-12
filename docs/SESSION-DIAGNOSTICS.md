@@ -30,8 +30,9 @@ exchange when that path is unavailable.
    school's router WAN, DNS, DHCP and power history. Server-side silence cannot
    distinguish a terminal process stall from a network or power outage.
 
-Do not lengthen authentication validity, ignore proofs, restart healthy gateway
-processes periodically, or claim that unit tests prove firmware recovery. After
+Do not treat longer inactivity timeouts as a repair for missing traffic, ignore
+proofs, restart healthy gateway processes periodically, or claim that unit tests
+prove firmware recovery. After
 any repair, verify actual `AuthInfo`/`Login`, sustained polling and a new event
 from both physical terminals. Then verify recovery after a controlled connection
 interruption when school operations permit it.

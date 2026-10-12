@@ -59,11 +59,11 @@ terminal. The checkpoint contains no terminal password: only the payload mode,
 server-generated salt and challenge values, their timestamps, iteration count,
 and an exact configuration fingerprint. At startup, it restores a checkpoint
 only when the terminal configuration still matches and the most recent
-challenge is younger than the vendor's three-command-interval validity window.
+challenge is younger than the gateway's 60-second inactivity window.
 The first valid request proves that continuity and records
 `pushsdk.session_resumed` before the next challenge is issued.
 
-If the outage exceeds that protocol window, or the configured PushSDK contract
+If the outage exceeds that inactivity window, or the configured PushSDK contract
 changes, the checkpoint is deleted. The corresponding request receives the
 documented `401` invalid-session envelope (`0x0020000f`, `Invalid SessionID.`)
 without a next challenge. A conforming terminal then performs `AuthInfo` and
@@ -76,6 +76,11 @@ removed from memory and PostgreSQL, and its terminal becomes `offline` with a
 deletion commit together. `last_seen_at` records the latest successfully
 authenticated exchange; expiry and rejected retries do not advance it. The
 console refreshes its terminal snapshot when it receives the expiry activity.
+
+Authenticated requests expire at 60 seconds since the last successful exchange;
+the sweep marks a silent device offline within the following five seconds.
+Polling remains at its configured interval. The initial, unauthenticated login
+challenge keeps its separate three-command-interval deadline.
 
 All exchanges for one terminal, including `AuthInfo` replacement and response
 writing, are serialized. A stale request with the wrong authentication proof

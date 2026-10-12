@@ -50,6 +50,11 @@ type SessionStart struct {
 
 const keyDerivationIterations = 4096
 
+// A successfully authenticated terminal may resume after a short network pause
+// without starting a new login. This gateway inactivity policy is independent
+// of the command polling interval and the initial login challenge deadline.
+const sessionIdleTimeout = time.Minute
+
 func (s *Sessions) Start(terminal config.Terminal, mode PayloadMode) (SessionStart, error) {
 	salt, err := randomAlphaNumeric(64)
 	if err != nil {
@@ -100,7 +105,7 @@ func (s *Sessions) Replace(pushSDKSerial string, session *Session) {
 
 // Restore loads only still-valid, configuration-matched session state. It is
 // sufficient to verify the next device request after a process restart, but it
-// never recreates a session after the vendor's challenge-validity window.
+// never recreates a session after its login or inactivity deadline.
 func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data interface {
 	PushSDKSessions(context.Context) ([]store.PushSDKSession, error)
 	DeletePushSDKSession(context.Context, string) error
@@ -153,7 +158,7 @@ func (s *Session) LoginChallengeExpired(now time.Time) bool {
 }
 
 func (s *Session) NextChallengeExpired(now time.Time) bool {
-	return s.NextChallengeAt.IsZero() || !now.Before(s.NextChallengeAt.Add(time.Duration(s.Terminal.CommandIntervalSeconds*3)*time.Second))
+	return s.NextChallengeAt.IsZero() || !now.Before(s.NextChallengeAt.Add(sessionIdleTimeout))
 }
 
 func (s *Session) IssueNextChallenge() (string, error) {

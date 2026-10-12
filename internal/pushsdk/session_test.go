@@ -79,16 +79,29 @@ func TestStoredSessionValidationRejectsMalformedState(t *testing.T) {
 	}
 }
 
-func TestChallengeExpiryUsesExactVendorDeadline(t *testing.T) {
+func TestLoginChallengeExpiryUsesExactDeadline(t *testing.T) {
 	deadline := time.Date(2026, time.September, 2, 12, 0, 15, 0, time.UTC)
 	session := &Session{Terminal: config.Terminal{CommandIntervalSeconds: 5}, CreatedAt: deadline.Add(-15 * time.Second), NextChallengeAt: deadline.Add(-15 * time.Second)}
 	if !session.LoginChallengeExpired(deadline) {
 		t.Fatal("login challenge remained valid at its deadline")
 	}
-	if !session.NextChallengeExpired(deadline) {
-		t.Fatal("next challenge remained valid at its deadline")
+	if session.LoginChallengeExpired(deadline.Add(-time.Nanosecond)) {
+		t.Fatal("login challenge expired before its deadline")
 	}
-	if session.NextChallengeExpired(deadline.Add(-time.Nanosecond)) {
-		t.Fatal("next challenge expired before its deadline")
+}
+
+func TestAuthenticatedSessionExpiresAfterOneMinute(t *testing.T) {
+	lastExchange := time.Date(2026, time.October, 12, 6, 0, 0, 0, time.UTC)
+	for _, pollSeconds := range []int{5, 20, 60} {
+		session := &Session{Terminal: config.Terminal{CommandIntervalSeconds: pollSeconds}, NextChallengeAt: lastExchange}
+		if session.NextChallengeExpired(lastExchange.Add(time.Minute - time.Nanosecond)) {
+			t.Fatalf("poll interval %d: session expired before one minute", pollSeconds)
+		}
+		if !session.NextChallengeExpired(lastExchange.Add(time.Minute)) {
+			t.Fatalf("poll interval %d: session remained valid at one minute", pollSeconds)
+		}
+	}
+	if !(&Session{}).NextChallengeExpired(lastExchange) {
+		t.Fatal("session without a challenge timestamp remained valid")
 	}
 }

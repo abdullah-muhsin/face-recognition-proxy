@@ -82,11 +82,17 @@ server-issued salt and challenges, iteration count, timestamps, and a hash of
 the exact terminal protocol configuration. It never contains a terminal
 password. The gateway commits the next challenge before sending each successful
 response. On startup it restores only a configuration-matched checkpoint that
-is still inside the vendor's three-command-interval challenge window. This
+is still inside the gateway's 60-second authenticated-session inactivity window. This
 allows a normal short gateway restart to continue the existing session without
 turning PushSDK off and on at the terminal. An expired or changed session is
 deleted and receives the documented invalid-session response; the gateway never
 guesses a challenge or changes terminal configuration.
+
+The device still polls every configured command interval (five seconds for the
+installed terminals). Each successful authenticated exchange renews the
+60-second inactivity deadline. The initial login challenge retains its separate
+three-command-interval deadline. Fresh `AuthInfo` replaces an existing session
+immediately; the terminal does not have to wait for inactivity expiry.
 
 ## Strict PushSDK contract
 

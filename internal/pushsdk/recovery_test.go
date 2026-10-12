@@ -29,6 +29,18 @@ type recoveryStore struct {
 	expiryError  error
 }
 
+func (s *recoveryStore) PushSDKSessions(context.Context) ([]store.PushSDKSession, error) {
+	if s.checkpoint == nil {
+		return nil, nil
+	}
+	return []store.PushSDKSession{*s.checkpoint}, nil
+}
+
+func (s *recoveryStore) DeletePushSDKSession(context.Context, string) error {
+	s.checkpoint = nil
+	return nil
+}
+
 func (s *recoveryStore) UpsertPushSDKSession(_ context.Context, state store.PushSDKSession) error {
 	s.checkpoint = &state
 	if state.Authenticated {
@@ -122,7 +134,7 @@ func TestExpiredDeviceCanAuthenticateAgainWithoutGatewayReset(t *testing.T) {
 			oldAuth := loginRecoveryDevice(t, svc, terminal)
 			assertActiveSessions(t, svc, 1)
 			session, _ := svc.sessions.Get(terminal.PushSDKSerial)
-			session.NextChallengeAt = time.Now().Add(-16 * time.Second)
+			session.NextChallengeAt = time.Now().Add(-61 * time.Second)
 			lastSeen := data.lastSeen
 			if proactive {
 				if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
@@ -168,7 +180,7 @@ func TestExpiryCommitFailureRetainsSessionForRetry(t *testing.T) {
 	svc, data, terminal := recoveryService(t)
 	loginRecoveryDevice(t, svc, terminal)
 	session, _ := svc.sessions.Get(terminal.PushSDKSerial)
-	session.NextChallengeAt = time.Now().Add(-16 * time.Second)
+	session.NextChallengeAt = time.Now().Add(-61 * time.Second)
 	data.expiryError = errors.New("database unavailable")
 	if err := svc.ExpireSessions(context.Background(), time.Now()); err == nil {
 		t.Fatal("expiry failure lost")
@@ -187,11 +199,69 @@ func TestExpiryCommitFailureRetainsSessionForRetry(t *testing.T) {
 	assertActiveSessions(t, svc, 0)
 }
 
+func TestDeviceResumesAfterThirtySecondPause(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		name := "running gateway"
+		if restart {
+			name = "restarted gateway"
+		}
+		t.Run(name, func(t *testing.T) {
+			svc, data, terminal := recoveryService(t)
+			auth := loginRecoveryDevice(t, svc, terminal)
+			session, _ := svc.sessions.Get(terminal.PushSDKSerial)
+			session.NextChallengeAt = time.Now().Add(-30 * time.Second)
+			if err := svc.persistSession(context.Background(), session); err != nil {
+				t.Fatal(err)
+			}
+			if restart {
+				svc.sessions = NewSessions()
+				data.status = "offline"
+				if err := svc.RestoreSessions(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			response := sendRecoveryRequest(svc, "CommandRequest", "", auth)
+			if response.Code != 200 || response.Header().Get("My-Custom-Challenge") == "" {
+				t.Fatalf("valid session did not resume: %d %s", response.Code, response.Body)
+			}
+			if data.status != "online" || time.Since(data.lastSeen) > time.Second {
+				t.Fatal("successful poll did not renew online session")
+			}
+			assertActiveSessions(t, svc, 1)
+		})
+	}
+}
+
+func TestFreshAuthenticationReplacesUnexpiredSession(t *testing.T) {
+	svc, data, terminal := recoveryService(t)
+	oldAuth := loginRecoveryDevice(t, svc, terminal)
+	previous, _ := svc.sessions.Get(terminal.PushSDKSerial)
+	freshAuth := loginRecoveryDevice(t, svc, terminal)
+	current, _ := svc.sessions.Get(terminal.PushSDKSerial)
+	if current == previous || current.Salt == previous.Salt {
+		t.Fatal("fresh authentication did not replace the live session")
+	}
+	assertActiveSessions(t, svc, 1)
+	if response := sendRecoveryRequest(svc, "CommandRequest", "", oldAuth); response.Code != 401 {
+		t.Fatalf("old authentication proof accepted: %d", response.Code)
+	}
+	if response := sendRecoveryRequest(svc, "CommandRequest", "", freshAuth); response.Code != 200 {
+		t.Fatalf("old request disrupted fresh session: %d %s", response.Code, response.Body)
+	}
+	if data.status != "online" || data.checkpoint == nil {
+		t.Fatal("replacement session lost its online state or checkpoint")
+	}
+	assertActiveSessions(t, svc, 1)
+}
+
 func TestMaintenanceDoesNotInterruptAnActiveExchange(t *testing.T) {
 	svc, data, terminal := recoveryService(t)
 	loginRecoveryDevice(t, svc, terminal)
 	session, _ := svc.sessions.Get(terminal.PushSDKSerial)
-	session.NextChallengeAt = time.Now().Add(-16 * time.Second)
+	session.NextChallengeAt = time.Now().Add(-61 * time.Second)
 	lock := svc.terminalLocks[terminal.PushSDKSerial]
 	lock.Lock()
 	if err := svc.ExpireSessions(context.Background(), time.Now()); err != nil {
