@@ -29,7 +29,7 @@ type serviceStore interface {
 	PushSDKSessions(context.Context) ([]store.PushSDKSession, error)
 	UpsertPushSDKSession(context.Context, store.PushSDKSession) error
 	DeletePushSDKSession(context.Context, string) error
-	ExpirePushSDKSession(context.Context, string, string) (*activity.Event, error)
+	ExpirePushSDKLoginChallenge(context.Context, string, string) (*activity.Event, error)
 	TransitionTerminalState(context.Context, string, string, *string, activity.Event) (activity.Event, error)
 	RecordGatewayActivity(context.Context, activity.Event) (activity.Event, error)
 	ExpireOverdueISAPICommands(context.Context) ([]activity.Event, error)
@@ -59,8 +59,7 @@ func NewService(cfg config.Config, data serviceStore, hub *monitor.Hub, metrics 
 }
 
 func (s *Service) RestoreSessions(ctx context.Context) error {
-	_, err := s.sessions.Restore(ctx, s.config, s.store, time.Now().UTC())
-	if err != nil {
+	if err := s.sessions.Restore(ctx, s.config, s.store, time.Now().UTC()); err != nil {
 		return err
 	}
 	// A checkpoint proves authentication continuity, not current reachability.
@@ -119,7 +118,7 @@ func (s *Service) MaintainSessions(ctx context.Context, now time.Time) error {
 					failures = append(failures, err)
 				}
 			} else if !session.Authenticated && session.LoginChallengeExpired(now) {
-				if err := s.expireSession(ctx, terminal, session); err != nil {
+				if err := s.expireLoginChallenge(ctx, terminal); err != nil {
 					failures = append(failures, err)
 				}
 			}
@@ -146,21 +145,14 @@ func (s *Service) markSessionIdle(ctx context.Context, terminal config.Terminal,
 	return nil
 }
 
-// Caller holds the terminal lock and, when present, the session lock. Commit
-// the offline state and session deletion together before removing memory state.
-func (s *Service) expireSession(ctx context.Context, terminal config.Terminal, session *Session) error {
-	stored, err := s.store.ExpirePushSDKSession(ctx, terminal.SerialNumber, "PushSDK login challenge expired; waiting for device authentication")
+// Caller holds the terminal and session locks and has checked that the initial
+// login is incomplete. Authenticated sessions never use this expiration path.
+func (s *Service) expireLoginChallenge(ctx context.Context, terminal config.Terminal) error {
+	stored, err := s.store.ExpirePushSDKLoginChallenge(ctx, terminal.SerialNumber, "PushSDK login challenge expired; waiting for device authentication")
 	if err != nil {
 		return err
 	}
 	s.sessions.Remove(terminal.PushSDKSerial)
-	if session != nil {
-		session.Authenticated = false
-		if session.Online {
-			session.Online = false
-			s.metrics.SessionsActive.Dec()
-		}
-	}
 	if stored != nil {
 		s.hub.Publish(*stored)
 	}
@@ -424,7 +416,7 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 		return protocolResponse{}, nil, invalidSession("login_already_completed")
 	}
 	if session.LoginChallengeExpired(time.Now().UTC()) {
-		if err := s.expireSession(ctx, terminal, session); err != nil {
+		if err := s.expireLoginChallenge(ctx, terminal); err != nil {
 			return protocolResponse{}, nil, err
 		}
 		return protocolResponse{}, nil, invalidSession("login_challenge_expired")
@@ -442,7 +434,6 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	}
 	previousChallenge := session.NextChallenge
 	previousChallengeAt := session.NextChallengeAt
-	previousAuthenticated := session.Authenticated
 	next, err := session.IssueNextChallenge()
 	if err != nil {
 		return protocolResponse{}, nil, err
@@ -451,7 +442,7 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	if err := s.persistSession(ctx, session); err != nil {
 		session.NextChallenge = previousChallenge
 		session.NextChallengeAt = previousChallengeAt
-		session.Authenticated = previousAuthenticated
+		session.Authenticated = false
 		return protocolResponse{}, nil, err
 	}
 	storedActivity, err := s.store.TransitionTerminalState(
@@ -469,16 +460,14 @@ func (s *Service) login(ctx context.Context, terminal config.Terminal, request *
 	if err != nil {
 		session.NextChallenge = previousChallenge
 		session.NextChallengeAt = previousChallengeAt
-		session.Authenticated = previousAuthenticated
+		session.Authenticated = false
 		if restoreErr := s.persistSession(ctx, session); restoreErr != nil {
 			s.logger.Error("restore PushSDK session after failed login transition", "terminal", terminal.SerialNumber, "error", restoreErr)
 		}
 		return protocolResponse{}, nil, err
 	}
-	if !previousAuthenticated {
-		session.Online = true
-		s.metrics.SessionsActive.Inc()
-	}
+	session.Online = true
+	s.metrics.SessionsActive.Inc()
 	s.hub.Publish(storedActivity)
 	result := protocolResponse{Body: loginResponse{successResponse: succeeded(), Data: loginResponseData{CommandInterval: terminal.CommandIntervalSeconds, ErrorDelay: terminal.ErrorDelaySeconds}}}
 	result.Challenge = next

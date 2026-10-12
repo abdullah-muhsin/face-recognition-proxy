@@ -35,12 +35,11 @@ The gateway cannot initiate an ISAPI exchange when that path is unavailable.
 
 Do not treat longer inactivity timeouts as a repair for missing traffic, ignore
 proofs, restart healthy gateway processes periodically, or claim that unit tests
-prove firmware recovery. After
-any repair, verify actual `AuthInfo`/`Login`, sustained polling and a new event
-from both physical terminals. Then verify recovery after a controlled connection
+prove firmware recovery. After any repair, verify a valid session resume or
+`AuthInfo`/`Login`, sustained polling and a new event from both physical terminals. Then verify recovery after a controlled connection
 interruption when school operations permit it.
 
-## Investigation: 12 October 2026
+## Historical investigation: 12 October 2026
 
 All times below use Asia/Baghdad. Creative Minds terminals are `GN0953967` and
 `GN0954003`; `GN0953979` belongs outside this tenant.
@@ -118,7 +117,7 @@ connectivity test. The configuration writes below returned native status code 1
 | Clock lead before correction | 1,017 seconds | 873 seconds |
 | Time configuration accepted | 09:41:53 | 09:48:21 |
 | Subsequent event timestamp / server receipt | 09:42:06 / 09:42:06.533 | 09:48:52 / 09:48:52.543 |
-| Session expiry after that last successful event | 09:42:23 (old policy) | 09:49:57 (new policy) |
+| Session expiry after that last successful event | 09:42:23 (old policy) | 09:49:57 (interim 60-second expiry) |
 
 The accurate post-change event timestamps demonstrate clock synchronization.
 Both terminals stopped command polling after the backward correction. Subsequent
@@ -127,16 +126,15 @@ they did not immediately initiate `AuthInfo`. This is distinct from the earlier
 outage with no arriving traffic. A device polling timer affected by a backward
 clock step is a hypothesis to verify, not an established firmware diagnosis.
 
-At the user's request, release `9a2f9c61f8d8` changed authenticated-session
+The superseded interim release `9a2f9c61f8d8` changed authenticated-session
 inactivity expiry to 60 seconds, independently of the five-second polling
-interval. Initial login challenges retain their own deadline. Tests cover a
-30-second pause, restoring a checkpoint after that pause, expiry at 60 seconds,
+interval. Initial login challenges retained their own deadline. Its tests covered
+a 30-second pause, restoring a checkpoint after that pause, expiry at 60 seconds,
 and fresh authentication replacing an unexpired session without accepting an old
 proof. Go tests with the race detector and `go vet` passed. GN0954003 resumed its
 persisted session at 09:47:40 after deployment, proving physical-device continuity
 through that gateway restart. Its later expiry after 64.811 seconds verifies the
-new inactivity threshold and five-second maintenance sweep in production.
-
+interim inactivity threshold and five-second maintenance sweep in production.
 
 ## Recovery policy correction after the clock change
 
@@ -146,8 +144,8 @@ terminals continued sending their existing proof rather than starting a new
 `AuthInfo` exchange. Increasing that deletion deadline to one minute delayed the
 failure but did not address it.
 
-The corrected policy separates liveness from authentication. One minute without
-contact marks an authenticated terminal offline and retains the latest exact
+Release `40b946ee9a3d`, deployed at 10:13:50 Baghdad time, corrected the policy
+by separating liveness from authentication. One minute without contact marks an authenticated terminal offline and retains the latest exact
 challenge in PostgreSQL and memory. Returning traffic must prove that challenge;
 then normal rotation resumes. Initial login expiry, explicit logout, fresh
 AuthInfo replacement, and configuration invalidation still revoke the relevant

@@ -26,7 +26,6 @@ type recoveryStore struct {
 	status       string
 	lastSeen     time.Time
 	activities   []activity.Event
-	expiryError  error
 	idleError    error
 }
 
@@ -60,10 +59,7 @@ func (s *recoveryStore) TransitionTerminalState(ctx context.Context, _ string, s
 	s.status = status
 	return s.RecordGatewayActivity(ctx, event)
 }
-func (s *recoveryStore) ExpirePushSDKSession(ctx context.Context, serial, reason string) (*activity.Event, error) {
-	if s.expiryError != nil {
-		return nil, s.expiryError
-	}
+func (s *recoveryStore) ExpirePushSDKLoginChallenge(ctx context.Context, serial, reason string) (*activity.Event, error) {
 	s.checkpoint = nil
 	if s.status == "offline" {
 		return nil, nil

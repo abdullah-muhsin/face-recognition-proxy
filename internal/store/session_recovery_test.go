@@ -57,15 +57,15 @@ func sessionRecoveryTestStore(t *testing.T) (*Store, config.Terminal) {
 	return data, terminal
 }
 
-func TestSessionExpiryTransaction(t *testing.T) {
+func TestLoginChallengeExpiryTransaction(t *testing.T) {
 	data, terminal := sessionRecoveryTestStore(t)
 	pool := data.pool
 	ctx := context.Background()
-	if _, err := pool.Exec(ctx, "UPDATE terminals SET connection_status = 'online'"); err != nil {
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	if _, err := pool.Exec(ctx, "UPDATE terminals SET connection_status = 'authenticating', last_seen_at = $1", at); err != nil {
 		t.Fatal(err)
 	}
-	at := time.Now().UTC().Truncate(time.Microsecond)
-	state := PushSDKSession{TerminalSerialNumber: terminal.SerialNumber, ConfigurationFingerprint: terminal.SessionFingerprint(), PayloadMode: "plaintext", Salt: strings.Repeat("s", 64), LoginChallenge: strings.Repeat("c", 64), NextChallenge: strings.Repeat("a", 64), Iterations: 4096, CreatedAt: at, NextChallengeAt: &at, Authenticated: true}
+	state := PushSDKSession{TerminalSerialNumber: terminal.SerialNumber, ConfigurationFingerprint: terminal.SessionFingerprint(), PayloadMode: "plaintext", Salt: strings.Repeat("s", 64), LoginChallenge: strings.Repeat("c", 64), Iterations: 4096, CreatedAt: at, Authenticated: false}
 	if err := data.UpsertPushSDKSession(ctx, state); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestSessionExpiryTransaction(t *testing.T) {
 	CREATE TRIGGER reject_offline BEFORE UPDATE ON terminals FOR EACH ROW EXECUTE FUNCTION reject_offline();`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := data.ExpirePushSDKSession(ctx, terminal.SerialNumber, "expired"); err == nil {
+	if _, err := data.ExpirePushSDKLoginChallenge(ctx, terminal.SerialNumber, "expired"); err == nil {
 		t.Fatal("expected expiry failure")
 	}
 	sessions, err := data.PushSDKSessions(ctx)
@@ -85,7 +85,7 @@ func TestSessionExpiryTransaction(t *testing.T) {
 	if _, err := pool.Exec(ctx, "DROP TRIGGER reject_offline ON terminals"); err != nil {
 		t.Fatal(err)
 	}
-	event, err := data.ExpirePushSDKSession(ctx, terminal.SerialNumber, "expired")
+	event, err := data.ExpirePushSDKLoginChallenge(ctx, terminal.SerialNumber, "expired")
 	if err != nil || event == nil {
 		t.Fatalf("expiry: %v %v", event, err)
 	}
@@ -109,7 +109,7 @@ func TestSessionExpiryTransaction(t *testing.T) {
 	if err != nil || len(sessions) != 0 {
 		t.Fatalf("expired checkpoint retained: %v %v", sessions, err)
 	}
-	if event, err := data.ExpirePushSDKSession(ctx, terminal.SerialNumber, "expired"); err != nil || event != nil {
+	if event, err := data.ExpirePushSDKLoginChallenge(ctx, terminal.SerialNumber, "expired"); err != nil || event != nil {
 		t.Fatalf("duplicate transition: %v %v", event, err)
 	}
 }

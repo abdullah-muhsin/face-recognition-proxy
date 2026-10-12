@@ -109,17 +109,16 @@ func (s *Sessions) Replace(pushSDKSerial string, session *Session) {
 func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data interface {
 	PushSDKSessions(context.Context) ([]store.PushSDKSession, error)
 	DeletePushSDKSession(context.Context, string) error
-}, now time.Time) (int, error) {
+}, now time.Time) error {
 	storedSessions, err := data.PushSDKSessions(ctx)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	restored := 0
 	for _, stored := range storedSessions {
 		terminal, found := cfg.TerminalBySerialNumber(stored.TerminalSerialNumber)
 		if !found || stored.ConfigurationFingerprint != terminal.SessionFingerprint() || !validStoredSession(stored) {
 			if err := data.DeletePushSDKSession(ctx, stored.TerminalSerialNumber); err != nil {
-				return 0, err
+				return err
 			}
 			continue
 		}
@@ -138,18 +137,15 @@ func (s *Sessions) Restore(ctx context.Context, cfg config.Config, data interfac
 		}
 		if !session.Authenticated && session.LoginChallengeExpired(now) {
 			if err := data.DeletePushSDKSession(ctx, stored.TerminalSerialNumber); err != nil {
-				return 0, err
+				return err
 			}
 			continue
 		}
 		s.mu.Lock()
 		s.entries[terminal.PushSDKSerial] = session
 		s.mu.Unlock()
-		if session.Authenticated {
-			restored++
-		}
 	}
-	return restored, nil
+	return nil
 }
 
 func (s *Session) LoginChallengeExpired(now time.Time) bool {

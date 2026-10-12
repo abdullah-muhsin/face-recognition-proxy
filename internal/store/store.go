@@ -436,10 +436,11 @@ func (s *Store) UpsertPushSDKSession(ctx context.Context, session PushSDKSession
 	return tx.Commit(ctx)
 }
 
-// ExpirePushSDKSession atomically removes unusable credentials and marks the
-// terminal offline without advancing its last authenticated contact time.
-// Repeated expiry/rejection does not emit repeated offline transitions.
-func (s *Store) ExpirePushSDKSession(ctx context.Context, serial, reason string) (*activity.Event, error) {
+// ExpirePushSDKLoginChallenge atomically removes an expired initial handshake
+// and marks the terminal offline without advancing its last contact time.
+// The caller must have verified that authentication has not completed.
+// Repeated expiry does not emit repeated offline transitions.
+func (s *Store) ExpirePushSDKLoginChallenge(ctx context.Context, serial, reason string) (*activity.Event, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
