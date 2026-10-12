@@ -94,3 +94,6 @@ and successful command polling from the physical device after an interruption.
 If any step fails, retain the exact gateway JSON logs and the terminal's
 configuration screen, then fix the documented wire contract. Do not enable a
 permissive parser fallback to force the test through.
+
+For recurring offline states, follow [Terminal connection diagnosis](SESSION-DIAGNOSTICS.md)
+to distinguish missing traffic, transport failures and authentication failures.
