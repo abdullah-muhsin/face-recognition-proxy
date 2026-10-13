@@ -12,6 +12,60 @@ const loading = ref(false)
 const configuration = ref({ routes: [], signingKeyIds: [] })
 const page = ref({ deliveries: [], total: 0 })
 const offset = ref(0)
+const photoPage = ref({ deliveries: [], total: 0 })
+const photoOffset = ref(0)
+const photoSerial = ref('')
+const photoThrough = ref(null)
+const photoPreview = ref(null)
+watch([photoSerial, photoThrough], () => {
+  photoPreview.value = null
+})
+async function photoBackfill(action) {
+  loading.value = true
+  try {
+    const input =
+      action === 'preview'
+        ? { throughDeliveryId: Number(photoThrough.value || 0) }
+        : {
+            throughDeliveryId: photoPreview.value.throughDeliveryId,
+            previewToken: photoPreview.value.token,
+          }
+    const result = await gateway.attachmentBackfill(
+      photoSerial.value,
+      action,
+      input,
+    )
+    photoPreview.value = action === 'preview' ? result : null
+    if (action === 'queue') {
+      toast.add({
+        severity: 'success',
+        summary: `${result.queuedCount} photo receipts queued`,
+        life: 5000,
+      })
+      await loadData()
+    }
+  } catch (error) {
+    photoPreview.value = null
+    report(error)
+  } finally {
+    loading.value = false
+  }
+}
+async function retryPhoto(id) {
+  loading.value = true
+  try {
+    await gateway.retryAttachmentDelivery(id)
+    await loadData()
+  } catch (error) {
+    report(error)
+  } finally {
+    loading.value = false
+  }
+}
+async function paginatePhotos(event) {
+  photoOffset.value = event.first
+  await reload()
+}
 const serial = ref('')
 const form = ref({
   endpointUrl: '',
@@ -101,9 +155,11 @@ async function loadData() {
   const results = await Promise.all([
     gateway.loadDeliveryConfiguration(),
     gateway.loadEventDeliveries(offset.value),
+    gateway.loadAttachmentDeliveries(photoOffset.value),
   ])
   configuration.value = results[0]
   page.value = results[1]
+  photoPage.value = results[2]
 }
 function report(error) {
   if (isAuthenticationError(error)) {
@@ -557,6 +613,143 @@ onMounted(reload)
       :rows="gateway.pageSize"
       :total-records="page.total"
       @page="paginate"
+    />
+  </section>
+  <section
+    class="mt-5 overflow-hidden rounded-lg border border-slate-300 bg-white"
+  >
+    <div class="border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <h2 class="text-sm font-semibold text-slate-950">Scan photos</h2>
+      <p class="mt-1 text-xs text-slate-500">
+        Photos are delivered separately after the school stores the event.
+        Attendance continues while photos are pending. Delivered confirms the
+        photo or its unavailability was stored.
+      </p>
+    </div>
+    <div class="p-4">
+      <h3 class="mb-3 text-sm font-semibold">Historical photo backfill</h3>
+      <p class="mb-3 text-xs text-slate-500">
+        Send photo information for previously delivered events to their original
+        destinations, without replaying attendance. Archives without image bytes
+        are reported as no photo supplied.
+      </p>
+      <form
+        class="flex flex-wrap items-end gap-3"
+        @submit.prevent="photoBackfill('preview')"
+      >
+        <label class="grid gap-1 text-sm"
+          >Terminal<select
+            v-model="photoSerial"
+            required
+            class="rounded border border-slate-300 p-2"
+            :disabled="loading"
+          >
+            <option value="">Select enabled destination</option>
+            <option
+              v-for="destination in configuration.routes.filter(
+                (item) => item.enabled,
+              )"
+              :key="destination.terminalSerialNumber"
+              :value="destination.terminalSerialNumber"
+            >
+              {{ destination.terminalSerialNumber }}
+            </option>
+          </select></label
+        >
+        <label class="grid gap-1 text-sm"
+          >Through event delivery ID (optional)<InputText
+            v-model="photoThrough"
+            type="number"
+            min="1"
+            step="1"
+            :disabled="loading"
+        /></label>
+        <Button
+          type="submit"
+          label="Preview photo backfill"
+          :disabled="loading || !photoSerial"
+        />
+      </form>
+      <div v-if="photoPreview" class="mt-3 text-sm">
+        <p>
+          {{ photoPreview.eligible }} event photo receipts ready, through
+          delivery #{{ photoPreview.throughDeliveryId }}. Each receipt includes
+          the original picture or an explicit absence/error status.
+        </p>
+        <Button
+          class="mt-3"
+          label="Queue previewed photo receipts"
+          :disabled="loading || photoPreview.eligible === 0"
+          @click="photoBackfill('queue')"
+        />
+      </div>
+    </div>
+    <div class="overflow-auto border-t border-slate-200 p-4">
+      <table class="w-full text-left text-sm">
+        <thead>
+          <tr class="border-b border-slate-200 bg-slate-50 text-slate-600">
+            <th class="p-2">Photo / event delivery</th>
+            <th class="p-2">Terminal</th>
+            <th class="p-2">Photo availability</th>
+            <th class="p-2">Delivery state</th>
+            <th class="p-2">Attempts</th>
+            <th class="p-2">HTTP / error</th>
+            <th class="p-2">Next attempt</th>
+            <th class="p-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="delivery in photoPage.deliveries"
+            :key="delivery.id"
+            class="border-b border-slate-200"
+          >
+            <td class="p-2">
+              #{{ delivery.id }} / #{{ delivery.eventDeliveryId }}
+            </td>
+            <td class="p-2">
+              <code class="text-xs">{{ delivery.terminalSerialNumber }}</code>
+            </td>
+            <td class="p-2">
+              {{ delivery.availability ?? 'Awaiting event delivery' }}
+              <small>{{ delivery.reason }}</small>
+            </td>
+            <td class="p-2">{{ delivery.status }}</td>
+            <td class="p-2">{{ delivery.attempts }}</td>
+            <td class="p-2">
+              {{ delivery.lastHttpStatus }} {{ delivery.lastError }}
+            </td>
+            <td class="p-2">
+              {{
+                delivery.status === 'pending'
+                  ? formatTime(delivery.nextAttemptAt)
+                  : '—'
+              }}
+            </td>
+            <td class="p-2">
+              <Button
+                v-if="delivery.status === 'failed'"
+                label="Retry photo"
+                size="small"
+                :disabled="loading"
+                @click="retryPhoto(delivery.id)"
+              />
+            </td>
+          </tr>
+          <tr v-if="photoPage.deliveries.length === 0">
+            <td colspan="8" class="p-2 text-slate-500">
+              No photo receipts queued.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <Paginator
+      v-if="photoPage.total > gateway.pageSize"
+      :first="photoOffset"
+      :rows="gateway.pageSize"
+      :total-records="photoPage.total"
+      @page="paginatePhotos"
     />
   </section>
 </template>

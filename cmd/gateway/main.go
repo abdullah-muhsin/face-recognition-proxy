@@ -76,6 +76,7 @@ func run(logger *slog.Logger) error {
 	defer stopRuntimeMaintenance()
 	go push.MaintainISAPICommandDeadlines(runtimeContext)
 	go delivery.New(data, cfg.DeliverySigningKeys, logger).Run(runtimeContext)
+	go delivery.New(store.AttachmentQueue{Store: data}, cfg.DeliverySigningKeys, logger.With("queue", "attachments")).Run(runtimeContext)
 	api, err := httpapi.New(cfg, data, hub, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}), logger)
 	if err != nil {
 		return err

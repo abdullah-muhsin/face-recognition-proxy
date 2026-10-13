@@ -122,6 +122,7 @@ func TestDeliveryAtomicityDeduplicationOldLiveScansAndImmutableDestination(t *te
 	if err = data.FinishEventDelivery(ctx, *replay, "delivered", 200, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	finishTestAttachments(t, data)
 	if err = data.SaveDeliveryRoute(ctx, changed, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func TestDeliveryPauseAndTransientRetry(t *testing.T) {
 func TestDeliveryForwardMigration(t *testing.T) {
 	data := deliveryTestStore(t)
 	ctx := context.Background()
-	if _, err := data.pool.Exec(ctx, `DROP TABLE event_deliveries; DROP TABLE event_delivery_backfills; DROP TABLE event_delivery_routes; DELETE FROM schema_migrations WHERE name IN ('013_event_delivery.sql','014_delivery_backfills.sql')`); err != nil {
+	if _, err := data.pool.Exec(ctx, `DROP TABLE event_attachment_deliveries; DROP TABLE event_deliveries; DROP TABLE event_delivery_backfills; DROP TABLE event_delivery_routes; DELETE FROM schema_migrations WHERE name IN ('013_event_delivery.sql','014_delivery_backfills.sql','015_event_attachments.sql')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := data.Migrate(ctx, filepath.Join("..", "..", "db", "migrations")); err != nil {
@@ -244,6 +245,7 @@ func TestDestinationRemovalPreservesDeliveredHistoryAndBlocksUnfinishedWork(t *t
 	if err = data.FinishEventDelivery(ctx, *d, "delivered", 200, "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
+	finishTestAttachments(t, data)
 	if err = data.DeleteDeliveryRoute(ctx, "DEVICE", 1); err != nil {
 		t.Fatal(err)
 	}

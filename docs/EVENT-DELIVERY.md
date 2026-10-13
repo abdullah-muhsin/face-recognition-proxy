@@ -121,3 +121,58 @@ The incorrect GN0953979 Creative Minds destination must be removed; its device
 records remain in the gateway archive and are not included in Creative Minds
 backfills. Teacher mappings belong to the school platform and are never guessed
 by the gateway or derived from numeric ID equality across devices.
+
+## Separate event attachment delivery
+
+New event outbox inserts also insert `event_attachment_deliveries` in the same
+transaction. A separate worker waits for the event's `delivered` receipt before
+claiming its photo job. It uses the original event destination with `/attachments`
+appended to its URL path (preserving a configured query), original signing key,
+and the same bounded retry schedule and lease ownership checks. Pending/sending
+photo jobs also block destination/key changes, and unfinished photo jobs block
+route removal. Pausing stops both workers; in-flight requests can complete.
+
+The photo body is materialized once from the immutable archive on first claim,
+then retained byte-for-byte across retries. Extraction and JPEG checks run outside
+the device ingestion request. The worker accepts only the declared multipart
+`Picture` JPEG part, validates its decoding and dimensions (at most 40 megapixels),
+and preserves exact image bytes. Decoded size is at most 5 MiB. It never fetches
+picture URLs or substitutes enrollment portraits. Conflicting/duplicate parts,
+declared-but-missing pictures and malformed images produce explicit unavailable
+receipts rather than silently disappearing or blocking attendance.
+
+The signed JSON attachment contract has exactly `schemaVersion` (1), `kind`
+(`event_attachment`), `source`, `eventId`, `terminalSerialNumber`, `pushSdkSerial`,
+`attachmentId` (`Picture`), `availability`, `reason`, `attachment`.
+For `availability=available`, reason is null and attachment contains exactly
+`contentType` (`image/jpeg`), integer `byteSize`, lowercase hexadecimal `sha256`,
+and canonical `dataBase64`. For `not_provided`, reason and attachment are null.
+For `unavailable`, attachment is null and reason is one of `invalid_multipart`,
+`invalid_picture`, `missing_picture`, `unsupported_picture_count`,
+`picture_too_large`, `invalid_jpeg`. Retained ISAPI metadata has no stored image
+bytes and reports `not_provided`. The attendance v1/v2 bodies are unchanged.
+
+Success requires HTTP 200 and exactly
+`{"schemaVersion":1,"eventId":"<matching event>","attachmentId":"Picture","receipt":"stored"}`.
+An attendance-only receipt cannot complete a photo delivery. Receipt stored means
+the image OR its explicit unavailability is durably recorded; the console shows
+both delivery state and photo availability. Storage failures are retried. Permanent
+failures remain visible for administrator correction and **Retry photo**.
+
+Existing event deliveries are not automatically selected by the migration.
+Use Event delivery → Scan photos → Historical photo backfill. Preview is read-only,
+scoped to one configured enabled terminal and a fixed event-delivery ID upper
+bound. Only delivered events without a photo job qualify. The token binds that
+selection and the original destination/key; queuing rechecks it under the terminal
+lock and records the administrator and selection in gateway activity. At most
+5000 event receipts can be selected at once; an optional upper delivery ID allows
+smaller batches. Already queued jobs are excluded. This backfill queues only
+attachment receipts, never attendance. Deploy the receiving application first.
+
+Admin APIs: `GET /api/v1/admin/attachment-deliveries`,
+`POST /api/v1/admin/attachment-deliveries/{id}/retry`, and
+`POST /api/v1/admin/terminals/{serial}/attachment-backfill/{preview|queue}`.
+Preview takes `throughDeliveryId` (0 selects the current maximum); queue takes the
+returned `throughDeliveryId` and `previewToken` (the preview's `token`). All routes
+require the existing authenticated administrator session with its HttpOnly,
+SameSite=Strict cookie.

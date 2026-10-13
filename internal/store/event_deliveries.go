@@ -23,6 +23,7 @@ type DeliveryRoute struct {
 }
 
 type EventDelivery struct {
+	Attachment           bool       `json:"-"`
 	ID                   int64      `json:"id"`
 	DeviceEventID        *int64     `json:"deviceEventId"`
 	RetainedEventID      *int64     `json:"retainedEventId"`
@@ -40,8 +41,8 @@ type EventDelivery struct {
 	Body                 []byte     `json:"-"`
 }
 
-// EventMessage is the complete, versioned contract. Media and credentials never
-// leave the source archive. Identifiers retain their exact vendor spelling.
+// EventMessage is the immutable attendance metadata contract. Pictures use a
+// separate signed attachment delivery; identifiers retain their exact spelling.
 type EventMessage struct {
 	SchemaVersion        int        `json:"schemaVersion"`
 	Source               string     `json:"source,omitempty"`
@@ -84,8 +85,12 @@ func enqueueEventDelivery(ctx context.Context, tx pgx.Tx, eventID int64) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO event_deliveries (device_event_id,terminal_serial_number,endpoint_url,signing_key_id,request_body) VALUES ($1,$2,$3,$4,$5)`, eventID, route.TerminalSerialNumber, route.EndpointURL, route.SigningKeyID, body)
-	return err
+	var deliveryID int64
+	err = tx.QueryRow(ctx, `INSERT INTO event_deliveries (device_event_id,terminal_serial_number,endpoint_url,signing_key_id,request_body) VALUES ($1,$2,$3,$4,$5) RETURNING id`, eventID, route.TerminalSerialNumber, route.EndpointURL, route.SigningKeyID, body).Scan(&deliveryID)
+	if err != nil {
+		return err
+	}
+	return enqueueAttachment(ctx, tx, deliveryID)
 }
 
 func (s *Store) SaveDeliveryRoute(ctx context.Context, route DeliveryRoute, actorID int64) error {
@@ -103,7 +108,7 @@ func (s *Store) SaveDeliveryRoute(ctx context.Context, route DeliveryRoute, acto
 	var blocked bool
 	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_delivery_routes r WHERE r.terminal_serial_number=$1
  AND (r.endpoint_url<>$2 OR r.signing_key_id<>$3)
- AND EXISTS(SELECT 1 FROM event_deliveries d WHERE d.terminal_serial_number=$1 AND d.status IN ('pending','sending')))`, serial, route.EndpointURL, route.SigningKeyID).Scan(&blocked)
+ AND EXISTS(SELECT 1 FROM event_deliveries d WHERE d.terminal_serial_number=$1 AND (d.status IN ('pending','sending') OR EXISTS(SELECT 1 FROM event_attachment_deliveries a WHERE a.event_delivery_id=d.id AND a.status IN ('pending','sending')))))`, serial, route.EndpointURL, route.SigningKeyID).Scan(&blocked)
 	if err != nil {
 		return err
 	}
@@ -237,7 +242,7 @@ func (s *Store) DeleteDeliveryRoute(ctx context.Context, serial string, actorID 
 		return err
 	}
 	var unfinished bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_deliveries WHERE terminal_serial_number=$1 AND status<>'delivered')`, serial).Scan(&unfinished); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_deliveries d WHERE terminal_serial_number=$1 AND (status<>'delivered' OR EXISTS(SELECT 1 FROM event_attachment_deliveries a WHERE a.event_delivery_id=d.id AND a.status<>'delivered')))`, serial).Scan(&unfinished); err != nil {
 		return err
 	}
 	if unfinished {

@@ -425,6 +425,26 @@ export const useGatewayStore = defineStore('gateway', () => {
       },
     )
   }
+  function loadAttachmentDeliveries(offset = 0) {
+    return request(
+      `/api/v1/admin/attachment-deliveries?limit=${pageSize}&offset=${offset}`,
+    )
+  }
+  function retryAttachmentDelivery(id) {
+    return request(`/api/v1/admin/attachment-deliveries/${id}/retry`, {
+      method: 'POST',
+    })
+  }
+  function attachmentBackfill(serial, action, data) {
+    return request(
+      `/api/v1/admin/terminals/${encodeURIComponent(serial)}/attachment-backfill/${action}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      },
+    )
+  }
   function retryEventDelivery(id) {
     return request(`/api/v1/admin/event-deliveries/${id}/retry`, {
       method: 'POST',
@@ -432,6 +452,9 @@ export const useGatewayStore = defineStore('gateway', () => {
   }
 
   return {
+    loadAttachmentDeliveries,
+    retryAttachmentDelivery,
+    attachmentBackfill,
     previewEventBackfill,
     queueEventBackfill,
     loadDeliveryConfiguration,

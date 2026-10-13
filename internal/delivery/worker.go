@@ -115,13 +115,25 @@ func (w *Worker) send(ctx context.Context, d store.EventDelivery) (string, int, 
 		return "failed", code, "invalid_receipt"
 	}
 	var source store.EventMessage
-	if json.Unmarshal(d.Body, &source) != nil || !validReceipt(body, source.EventID, source.SchemaVersion) {
+	attachmentID := ""
+	if d.Attachment {
+		attachmentID = "Picture"
+	}
+	if json.Unmarshal(d.Body, &source) != nil || !validReceipt(body, source.EventID, source.SchemaVersion, attachmentID) {
 		return "failed", code, "invalid_receipt"
 	}
 	return "delivered", code, ""
 }
 
-func validReceipt(body []byte, eventID string, schemaVersion int) bool {
+func validReceipt(body []byte, eventID string, schemaVersion int, attachmentIDs ...string) bool {
+	attachmentID := ""
+	if len(attachmentIDs) > 0 {
+		attachmentID = attachmentIDs[0]
+	}
+	expectedFields := 3
+	if attachmentID != "" {
+		expectedFields = 4
+	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {
@@ -136,6 +148,11 @@ func validReceipt(body []byte, eventID string, schemaVersion int) bool {
 		}
 		seen[name] = true
 		switch name {
+		case "attachmentId":
+			var id string
+			if attachmentID == "" || decoder.Decode(&id) != nil || id != attachmentID {
+				return false
+			}
 		case "schemaVersion":
 			var version int
 			if decoder.Decode(&version) != nil || version != schemaVersion {
@@ -156,5 +173,5 @@ func validReceipt(body []byte, eventID string, schemaVersion int) bool {
 		}
 	}
 	closing, err := decoder.Token()
-	return err == nil && closing == json.Delim('}') && len(seen) == 3 && decoder.Decode(&struct{}{}) == io.EOF
+	return err == nil && closing == json.Delim('}') && len(seen) == expectedFields && decoder.Decode(&struct{}{}) == io.EOF
 }

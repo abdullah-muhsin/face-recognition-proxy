@@ -79,3 +79,13 @@ func TestReceiptMustMatchMessageVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestAttachmentReceiptCannotBeConfusedWithEventReceipt(t *testing.T) {
+	body := []byte(`{"schemaVersion":1,"eventId":"event","attachmentId":"Picture","receipt":"stored"}`)
+	if !validReceipt(body, "event", 1, "Picture") || validReceipt(body, "event", 1) || validReceipt(body, "other", 1, "Picture") || validReceipt(body, "event", 1, "another") {
+		t.Fatal("attachment receipt not bound to identity")
+	}
+	if validReceipt([]byte(`{"schemaVersion":1,"eventId":"event","receipt":"stored"}`), "event", 1, "Picture") {
+		t.Fatal("event receipt accepted for attachment")
+	}
+}

@@ -238,8 +238,12 @@ func (s *Store) QueueEventBackfill(ctx context.Context, serial string, from, unt
 		} else {
 			retained = &candidate.ID
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO event_deliveries (device_event_id,retained_event_id,backfill_id,terminal_serial_number,endpoint_url,signing_key_id,request_body) VALUES ($1,$2,$3,$4,$5,$6,$7)`, live, retained, batch, serial, p.Route.EndpointURL, p.Route.SigningKeyID, candidate.Body)
+		var deliveryID int64
+		err = tx.QueryRow(ctx, `INSERT INTO event_deliveries (device_event_id,retained_event_id,backfill_id,terminal_serial_number,endpoint_url,signing_key_id,request_body) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, live, retained, batch, serial, p.Route.EndpointURL, p.Route.SigningKeyID, candidate.Body).Scan(&deliveryID)
 		if err != nil {
+			return 0, 0, err
+		}
+		if err = enqueueAttachment(ctx, tx, deliveryID); err != nil {
 			return 0, 0, err
 		}
 	}
